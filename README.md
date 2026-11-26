@@ -51,7 +51,9 @@ are published together in the repository's GitHub Releases.
   explicitly choose **Search Web**.
 - **Settings:** switch themes, change the hotkey, or launch a selected `.exe`
   installer. Enable **Start CMD Pal when I sign in** to add it to the current
-  Windows user's startup registry; the startup copy opens minimized.
+  Windows user's startup registry; the startup copy opens minimized. Use
+  **Check for Updates** to look for a GitHub release, then download and open a
+  checksum-verified update when one is available.
 
 Settings are stored in `%APPDATA%\CMDPal\settings.json` (or
 `~\CMDPal\settings.json` when `%APPDATA%` is unavailable). Website shortcuts and

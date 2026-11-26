@@ -1,12 +1,15 @@
 import ast
 import ctypes
+import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
 import tkinter as tk
+import urllib.request
 import webbrowser
 from ctypes import wintypes
 from pathlib import Path
@@ -30,6 +33,9 @@ SELECTED = "#234b3b"
 HIBERNATE_COMMAND = "__CMD_HIBERNATE__"
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_REGISTRY_NAME = "CMDPal"
+APP_VERSION = "1.3.0"
+LATEST_RELEASE_API = "https://api.github.com/repos/marlohowe/cmd-pal/releases/latest"
+MAX_UPDATE_BYTES = 150 * 1024 * 1024
 ACCENT_PRESETS = {
     "Mint": "#75f0ad",
     "Blue": "#76a9ff",
@@ -157,10 +163,102 @@ def is_hex_color(value):
     )
 
 
+def parse_release_version(tag):
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag or "")
+    if not match:
+        raise ValueError("The release tag is not a supported version.")
+    return tuple(int(part) for part in match.groups())
+
+
+def parse_release_update(release):
+    if not isinstance(release, dict):
+        raise ValueError("GitHub returned an invalid release response.")
+    tag = release.get("tag_name")
+    latest_version = parse_release_version(tag)
+    if latest_version <= parse_release_version(APP_VERSION):
+        return None
+
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError("The latest release has an invalid asset list.")
+    asset = next(
+        (item for item in assets
+         if isinstance(item, dict) and item.get("name") == "CMD-Pal.exe"),
+        None,
+    )
+    if not isinstance(asset, dict):
+        raise ValueError("The latest release does not include CMD-Pal.exe.")
+    download_url = asset.get("browser_download_url", "")
+    digest = asset.get("digest", "")
+    parsed_url = urlparse(download_url)
+    if parsed_url.scheme != "https" or parsed_url.hostname != "github.com":
+        raise ValueError("The release download URL is not a trusted GitHub HTTPS link.")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+        raise ValueError("GitHub did not provide a valid SHA-256 checksum for this update.")
+    return {
+        "tag": tag,
+        "version": latest_version,
+        "url": download_url,
+        "digest": digest.split(":", 1)[1].lower(),
+    }
+
+
+def download_verified_update(update, updates_directory, urlopen=None):
+    tag = update.get("tag", "")
+    parse_release_version(tag)
+    download_url = update.get("url", "")
+    parsed_url = urlparse(download_url)
+    if parsed_url.scheme != "https" or parsed_url.hostname != "github.com":
+        raise ValueError("The release download URL is not a trusted GitHub HTTPS link.")
+    expected_digest = update.get("digest", "")
+    if not isinstance(expected_digest, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{64}", expected_digest
+    ):
+        raise ValueError("The release checksum is invalid.")
+    if urlopen is None:
+        urlopen = urllib.request.urlopen
+
+    update_directory = Path(updates_directory) / tag
+    update_directory.mkdir(parents=True, exist_ok=True)
+    destination = update_directory / "CMD-Pal.exe"
+    temporary_path = update_directory / "CMD-Pal.exe.download"
+    digest = hashlib.sha256()
+    total_bytes = 0
+    try:
+        request = urllib.request.Request(
+            download_url, headers={"User-Agent": "CMD-Pal-Updater"}
+        )
+        with urlopen(request, timeout=60) as response:
+            with temporary_path.open("wb") as downloaded:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_UPDATE_BYTES:
+                        raise ValueError("The update download exceeded the size limit.")
+                    digest.update(chunk)
+                    downloaded.write(chunk)
+        if digest.hexdigest() != expected_digest.lower():
+            raise ValueError("The update checksum did not match GitHub's release metadata.")
+        with temporary_path.open("rb") as downloaded:
+            if downloaded.read(2) != b"MZ":
+                raise ValueError("The downloaded update is not a Windows executable.")
+        os.replace(temporary_path, destination)
+        return destination
+    except (OSError, ValueError):
+        if temporary_path.exists():
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+        raise
+
+
 class CMDPal:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("CMD Pal")
+        self.root.title(f"CMD Pal {APP_VERSION}")
         self.root.geometry("1060x720")
         self.root.minsize(860, 600)
         self.root.configure(bg=BG)
@@ -173,6 +271,8 @@ class CMDPal:
         self.generation = 0
         self.hotkey_thread_id = None
         self.closing = False
+        self.updated_launch = "--migrate-startup" in sys.argv[1:]
+        self.hotkey_retry_scheduled = False
         self.config_path = Path(os.environ.get("APPDATA", str(Path.home()))) / "CMDPal" / "settings.json"
         self.settings = {
             "theme": "dark",
@@ -200,6 +300,8 @@ class CMDPal:
             threading.Thread(target=self.global_hotkey, daemon=True).start()
         if "--startup" in sys.argv[1:]:
             self.root.after(0, self.root.iconify)
+        if "--migrate-startup" in sys.argv[1:] and os.name == "nt":
+            self.root.after(250, self.migrate_startup)
 
     def palette(self):
         accent_name = self.settings.get("accent", "Mint")
@@ -512,6 +614,43 @@ class CMDPal:
             bg=c["panel"], fg=c["muted"], font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(2, 0))
 
+        updates = self.settings_section(self.settings_content, "APP UPDATES")
+        updates.pack(fill="x", pady=4)
+        tk.Label(
+            updates, text=f"Installed version: v{APP_VERSION}",
+            bg=c["panel"], fg=c["text"], font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            updates,
+            text="Check GitHub for a newer release. Updates are downloaded only after you choose to install.",
+            bg=c["panel"], fg=c["muted"], font=("Segoe UI", 8),
+            wraplength=670, justify="left",
+        ).pack(anchor="w", pady=(2, 5))
+        update_actions = tk.Frame(updates, bg=c["panel"])
+        update_actions.pack(fill="x")
+        self.update_check_button = tk.Button(
+            update_actions, text="CHECK FOR UPDATES", command=self.check_for_updates,
+            bg=c["bg"], fg=c["accent"], activebackground=c["selected"],
+            relief="flat", padx=10, pady=6, cursor="hand2",
+        )
+        self.update_check_button.pack(side="left")
+        self.update_install_button = tk.Button(
+            update_actions, text="DOWNLOAD & OPEN UPDATE",
+            command=self.download_update, bg=c["accent"], fg=c["bg"],
+            activebackground=c["selected"], relief="flat", padx=10, pady=6,
+            cursor="hand2", state="disabled",
+        )
+        self.update_install_button.pack(side="left", padx=(7, 0))
+        self.update_status = tk.Label(
+            updates, text="Updates are checked manually.", bg=c["panel"],
+            fg=c["muted"], font=("Segoe UI", 8), wraplength=670, justify="left",
+        )
+        self.update_status.pack(anchor="w", pady=(5, 0))
+        self.available_update = None
+        if os.name != "nt":
+            self.update_check_button.configure(state="disabled")
+            self.update_status.config(text="Windows executable updates are only available on Windows.")
+
         shortcut = self.settings_section(self.settings_content, "LAUNCH SHORTCUT")
         shortcut.pack(fill="x", pady=4)
         tk.Label(shortcut, text="Global hotkey", bg=c["panel"], fg=c["text"],
@@ -602,6 +741,99 @@ class CMDPal:
         if self.mode == "settings":
             self.settings_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
             return "break"
+
+    def dispatch_update_ui(self, callback, *args):
+        if self.closing:
+            return
+        try:
+            self.root.after(0, callback, *args)
+        except (RuntimeError, tk.TclError):
+            pass
+
+    def check_for_updates(self):
+        if os.name != "nt":
+            self.update_status.config(text="Windows executable updates are only available on Windows.")
+            return
+        self.available_update = None
+        self.update_check_button.configure(state="disabled")
+        self.update_install_button.configure(state="disabled")
+        self.update_status.config(text="Checking GitHub for the latest release…")
+        threading.Thread(target=self.check_updates_worker, daemon=True).start()
+
+    def check_updates_worker(self):
+        try:
+            request = urllib.request.Request(
+                LATEST_RELEASE_API,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "CMD-Pal-Updater",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                release = json.loads(response.read().decode("utf-8"))
+            update = parse_release_update(release)
+            self.dispatch_update_ui(self.finish_update_check, update, None)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+            self.dispatch_update_ui(self.finish_update_check, None, str(error))
+
+    def finish_update_check(self, update, error):
+        self.update_check_button.configure(state="normal")
+        if error:
+            self.update_status.config(text=f"Could not check for updates: {error}")
+        elif update is None:
+            self.update_status.config(text=f"CMD Pal v{APP_VERSION} is up to date.")
+        else:
+            self.available_update = update
+            self.update_status.config(text=f"Version {update['tag']} is available.")
+            self.update_install_button.configure(
+                text=f"DOWNLOAD & OPEN {update['tag']}", state="normal"
+            )
+
+    def download_update(self):
+        update = self.available_update
+        if not update:
+            return
+        self.update_check_button.configure(state="disabled")
+        self.update_install_button.configure(state="disabled")
+        self.update_status.config(text=f"Downloading {update['tag']}…")
+        threading.Thread(
+            target=self.download_update_worker, args=(update,), daemon=True
+        ).start()
+
+    def download_update_worker(self, update):
+        try:
+            updates_directory = (
+                Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+                / "CMDPal" / "Updates"
+            )
+            destination = download_verified_update(update, updates_directory)
+            self.dispatch_update_ui(self.launch_downloaded_update, destination, update["tag"])
+        except (OSError, ValueError) as error:
+            self.dispatch_update_ui(self.finish_update_download, str(error))
+
+    def finish_update_download(self, error):
+        self.update_check_button.configure(state="normal")
+        self.update_install_button.configure(state="normal")
+        self.update_status.config(text=f"Could not download update: {error}")
+
+    def launch_downloaded_update(self, executable, tag):
+        try:
+            subprocess.Popen(
+                [str(executable), "--migrate-startup"],
+                shell=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError as error:
+            self.finish_update_download(f"Downloaded {tag}, but could not open it: {error}")
+            return
+        self.close()
+
+    def migrate_startup(self):
+        if self.is_startup_enabled():
+            try:
+                self.set_startup_enabled(True)
+            except OSError as error:
+                self.status.config(text=f"Could not update startup shortcut: {error}")
 
     def startup_command(self):
         frozen = getattr(sys, "frozen", False)
@@ -856,6 +1088,12 @@ class CMDPal:
             modifiers, virtual_key = 0x0004, 0xBF
         if not user32.RegisterHotKey(None, 1, modifiers, virtual_key):
             self.root.after(0, lambda: self.status.config(text=f"{self.settings['hotkey']} unavailable"))
+            if self.updated_launch and not self.hotkey_retry_scheduled:
+                self.hotkey_retry_scheduled = True
+                self.root.after(
+                    1800,
+                    lambda: threading.Thread(target=self.global_hotkey, daemon=True).start(),
+                )
             return
         message = wintypes.MSG()
         self.root.after(0, lambda: self.status.config(text=f"Ready • {self.settings['hotkey']}"))
