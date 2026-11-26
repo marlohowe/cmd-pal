@@ -21,6 +21,8 @@ except ImportError:
 
 BG = "#0c0e16"
 PANEL = "#191f2c"
+SIDEBAR = "#111723"
+BORDER = "#2a3343"
 ACCENT = "#75f0ad"
 TEXT = "#f4f6ff"
 MUTED = "#929db0"
@@ -98,8 +100,8 @@ class CMDPal:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("CMD Pal")
-        self.root.geometry("820x620")
-        self.root.minsize(650, 480)
+        self.root.geometry("1060x720")
+        self.root.minsize(860, 600)
         self.root.configure(bg=BG)
 
         self.mode = "apps"
@@ -139,9 +141,15 @@ class CMDPal:
             return {
                 "bg": "#f3f5fa", "panel": "#ffffff", "accent": "#176b4b",
                 "text": "#182235", "muted": "#647084", "selected": "#d5eee2",
+                "sidebar": "#e9edf4", "border": "#d4dbe6",
+                "scroll_trough": "#e2e7ef", "scroll_thumb": "#9ba6b7",
+                "scroll_active": "#748197",
             }
         return {"bg": BG, "panel": PANEL, "accent": ACCENT,
-                "text": TEXT, "muted": MUTED, "selected": SELECTED}
+                "text": TEXT, "muted": MUTED, "selected": SELECTED,
+                "sidebar": SIDEBAR, "border": BORDER,
+                "scroll_trough": "#111722", "scroll_thumb": "#697587",
+                "scroll_active": "#98a3b4"}
 
     def gradient(self, width, height):
         image = tk.PhotoImage(width=width, height=height)
@@ -162,100 +170,149 @@ class CMDPal:
             self.ttk_style.theme_use("clam")
         except tk.TclError:
             pass
-        self.gradient_image = self.gradient(820, 90)
-        tk.Label(self.root, image=self.gradient_image, borderwidth=0).pack(fill="x")
-        heading = tk.Frame(self.root, bg=BG)
-        heading.pack(fill="x", padx=25, pady=(8, 2))
-        brand = tk.Frame(heading, bg=BG)
-        brand.pack(side="left")
-        tk.Label(brand, text="CMD PAL", bg=BG, fg=ACCENT,
-                 font=("Segoe UI", 22, "bold")).pack(anchor="w")
-        tk.Label(brand, text="Your personal launcher", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(anchor="w")
-        shortcut_hint = tk.Frame(heading, bg=PANEL, padx=11, pady=6)
-        shortcut_hint.pack(side="right", anchor="s", pady=2)
-        tk.Label(shortcut_hint, text="GLOBAL SHORTCUT", bg=PANEL, fg=MUTED,
-                 font=("Segoe UI", 7, "bold")).pack(anchor="e")
-        self.header_hotkey_label = tk.Label(
-            shortcut_hint, text=self.settings["hotkey"].upper(),
-            bg=PANEL, fg=ACCENT, font=("Segoe UI", 10, "bold")
-        )
-        self.header_hotkey_label.pack(anchor="e")
+        self.configure_ttk_theme()
+        c = self.palette()
+        self.shell = tk.Frame(self.root, bg=c["bg"])
+        self.shell.pack(fill="both", expand=True)
+        self.shell.grid_rowconfigure(0, weight=1)
+        self.shell.grid_columnconfigure(1, weight=1)
 
-        tabs = tk.Frame(self.root, bg=BG)
-        tabs.pack(fill="x", padx=25, pady=7)
+        self.sidebar = tk.Frame(self.shell, bg=c["sidebar"], width=220)
+        self.sidebar.grid(row=0, column=0, sticky="ns")
+        self.sidebar.grid_propagate(False)
+        logo = tk.Frame(self.sidebar, bg=c["sidebar"])
+        logo.pack(fill="x", padx=20, pady=(25, 30))
+        tk.Label(logo, text="CP", bg=c["accent"], fg=c["bg"],
+                 font=("Segoe UI", 14, "bold"), width=3, height=1
+                 ).pack(side="left", padx=(0, 10), ipady=5)
+        brand = tk.Frame(logo, bg=c["sidebar"])
+        brand.pack(side="left", anchor="center")
+        tk.Label(brand, text="CMD PAL", bg=c["sidebar"], fg=c["text"],
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        tk.Label(brand, text="DESKTOP LAUNCHER", bg=c["sidebar"], fg=c["muted"],
+                 font=("Segoe UI", 7, "bold")).pack(anchor="w", pady=(1, 0))
+        tk.Label(self.sidebar, text="WORKSPACE", bg=c["sidebar"], fg=c["muted"],
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=20, pady=(0, 7))
         self.tab_buttons = {}
         for mode, title in (
-            ("apps", "APPS"), ("favorites", "FAVORITES"), ("files", "FILES"),
-            ("commands", "COMMANDS"), ("tools", "TOOLS"), ("settings", "SETTINGS"),
+            ("apps", "▣   Apps"), ("favorites", "★   Favorites"),
+            ("files", "▤   Files"), ("commands", "⌘   Shortcuts"),
+            ("tools", "∑   Tools"), ("settings", "⚙   Settings"),
         ):
             button = tk.Button(
-                tabs, text=title, command=lambda selected=mode: self.change_mode(selected),
-                font=("Segoe UI", 9, "bold"), relief="flat", padx=9, pady=8,
-                cursor="hand2",
+                self.sidebar, text=title,
+                command=lambda selected=mode: self.change_mode(selected),
+                font=("Segoe UI", 10, "bold"), relief="flat", padx=15, pady=11,
+                cursor="hand2", anchor="w", width=20, bd=0,
             )
-            button.pack(side="left", padx=(0, 5))
+            button.pack(fill="x", padx=10, pady=2)
             self.tab_buttons[mode] = button
+        sidebar_footer = tk.Frame(self.sidebar, bg=c["sidebar"])
+        sidebar_footer.pack(side="bottom", fill="x", padx=20, pady=22)
+        tk.Frame(sidebar_footer, bg=c["border"], height=1).pack(fill="x", pady=(0, 14))
+        tk.Label(sidebar_footer, text="QUICK OPEN", bg=c["sidebar"], fg=c["muted"],
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        self.header_hotkey_label = tk.Label(
+            sidebar_footer, text=self.settings["hotkey"].upper(),
+            bg=c["sidebar"], fg=c["accent"], font=("Segoe UI", 11, "bold")
+        )
+        self.header_hotkey_label.pack(anchor="w", pady=(4, 2))
+        tk.Label(sidebar_footer, text="Press anywhere to show CMD Pal",
+                 bg=c["sidebar"], fg=c["muted"], font=("Segoe UI", 8),
+                 wraplength=175, justify="left").pack(anchor="w")
 
-        self.search_frame = tk.Frame(self.root, bg=PANEL, highlightthickness=1,
-                                     highlightbackground="#344153")
-        self.search_frame.pack(fill="x", padx=25, pady=7)
-        tk.Label(self.search_frame, text="⌕", bg=PANEL, fg=ACCENT,
-                 font=("Segoe UI", 20)).pack(side="left", padx=10)
-        self.search = tk.Entry(self.search_frame, bg=PANEL, fg=TEXT,
-                               insertbackground=ACCENT, font=("Segoe UI", 14),
-                               relief="flat", borderwidth=0)
-        self.search.pack(side="left", fill="x", expand=True, padx=8, pady=13)
+        self.main = tk.Frame(self.shell, bg=c["bg"])
+        self.main.grid(row=0, column=1, sticky="nsew", padx=30, pady=24)
+        self.main.grid_rowconfigure(4, weight=1)
+        self.main.grid_columnconfigure(0, weight=1)
+        heading = tk.Frame(self.main, bg=c["bg"])
+        heading.pack(fill="x", pady=(0, 20))
+        heading_text = tk.Frame(heading, bg=c["bg"])
+        heading_text.pack(side="left")
+        self.page_title_label = tk.Label(
+            heading_text, text="Apps", bg=c["bg"], fg=c["text"],
+            font=("Segoe UI", 23, "bold")
+        )
+        self.page_title_label.pack(anchor="w")
+        self.page_subtitle_label = tk.Label(
+            heading_text, text="Find and launch something quickly.",
+            bg=c["bg"], fg=c["muted"], font=("Segoe UI", 10)
+        )
+        self.page_subtitle_label.pack(anchor="w", pady=(2, 0))
+        tk.Label(heading, text="READY WHEN YOU ARE", bg=c["bg"], fg=c["accent"],
+                 font=("Segoe UI", 8, "bold")).pack(side="right", anchor="s", pady=5)
+
+        self.search_frame = tk.Frame(
+            self.main, bg=c["panel"], highlightthickness=1,
+            highlightbackground=c["border"],
+        )
+        tk.Label(self.search_frame, text="⌕", bg=c["panel"], fg=c["accent"],
+                 font=("Segoe UI", 20)).pack(side="left", padx=(15, 8))
+        self.search = tk.Entry(
+            self.search_frame, bg=c["panel"], fg=c["text"],
+            insertbackground=c["accent"], font=("Segoe UI", 13),
+            relief="flat", borderwidth=0,
+        )
+        self.search.pack(side="left", fill="x", expand=True, padx=8, pady=14)
         self.search.bind("<KeyRelease>", self.on_search)
 
-        self.folder_frame = tk.Frame(self.root, bg=BG)
+        self.folder_frame = tk.Frame(self.main, bg=c["bg"])
         self.folder_label = tk.Label(self.folder_frame, text="Folder: " + str(self.folder),
-                                     bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w")
-        self.folder_label.pack(side="left", fill="x", expand=True)
+                                     bg=c["bg"], fg=c["muted"], font=("Segoe UI", 9), anchor="w")
+        self.folder_label.pack(side="left", fill="x", expand=True, padx=2)
         tk.Button(self.folder_frame, text="Choose Folder", command=self.choose_folder,
-                  bg=PANEL, fg=ACCENT, relief="flat", font=("Segoe UI", 9, "bold"),
-                  padx=10, pady=6).pack(side="right")
+                  bg=c["panel"], fg=c["accent"], relief="flat", font=("Segoe UI", 9, "bold"),
+                  padx=10, pady=7, cursor="hand2").pack(side="right")
 
-        self.commands_frame = tk.Frame(self.root, bg=BG)
+        self.commands_frame = tk.Frame(self.main, bg=c["bg"])
         self.build_commands_controls()
-        self.tools_frame = tk.Frame(self.root, bg=BG)
+        self.tools_frame = tk.Frame(self.main, bg=c["bg"])
         self.build_tools_controls()
-        self.status = tk.Label(self.root, text="Loading applications...", bg=BG,
-                               fg=MUTED, font=("Segoe UI", 9), anchor="w")
-        self.status.pack(fill="x", padx=29, pady=6)
+        self.status_row = tk.Frame(self.main, bg=c["bg"])
+        self.status = tk.Label(self.status_row, text="Loading applications...", bg=c["bg"],
+                               fg=c["muted"], font=("Segoe UI", 9), anchor="w")
+        self.status.pack(side="left", fill="x", expand=True, pady=9)
+        self.result_count_label = tk.Label(self.status_row, text="", bg=c["bg"],
+                                           fg=c["muted"], font=("Segoe UI", 8))
+        self.result_count_label.pack(side="right", pady=9)
 
-        self.result_outer = tk.Frame(self.root, bg="#344153", padx=1, pady=1)
-        self.result_outer.pack(fill="both", expand=True, padx=25, pady=(0, 10))
-        inner = tk.Frame(self.result_outer, bg=PANEL)
+        self.result_outer = tk.Frame(self.main, bg=c["border"], padx=1, pady=1)
+        inner = tk.Frame(self.result_outer, bg=c["panel"])
         inner.pack(fill="both", expand=True)
-        self.listbox = tk.Listbox(inner, bg=PANEL, fg=TEXT, selectbackground=SELECTED,
-                                  selectforeground=ACCENT, font=("Segoe UI", 11),
-                                  relief="flat", borderwidth=0, highlightthickness=0,
-                                  activestyle="none", exportselection=False)
-        self.listbox.pack(fill="both", expand=True, padx=8, pady=8)
+        self.listbox = tk.Listbox(
+            inner, bg=c["panel"], fg=c["text"], selectbackground=c["selected"],
+            selectforeground=c["accent"], font=("Segoe UI", 11),
+            relief="flat", borderwidth=0, highlightthickness=0,
+            activestyle="none", exportselection=False,
+        )
+        self.listbox.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
+        self.list_scrollbar = ttk.Scrollbar(
+            inner, orient="vertical", command=self.listbox.yview,
+            style="CMD.Vertical.TScrollbar",
+        )
+        self.listbox.configure(yscrollcommand=self.list_scrollbar.set)
+        self.list_scrollbar.pack(side="right", fill="y", padx=(4, 8), pady=10)
         self.listbox.bind("<Double-Button-1>", self.launch_selected)
 
-        self.footer = tk.Frame(self.root, bg=BG)
-        self.footer.pack(fill="x", padx=25, pady=(0, 10))
+        self.footer = tk.Frame(self.main, bg=c["bg"])
         self.favorite_button = tk.Button(
             self.footer, text="☆ Favorite  (Ctrl+D)", command=self.toggle_favorite,
-            bg=PANEL, fg=ACCENT, relief="flat", font=("Segoe UI", 8, "bold"),
-            padx=8, pady=5,
+            bg=c["panel"], fg=c["accent"], relief="flat", font=("Segoe UI", 8, "bold"),
+            padx=10, pady=7, cursor="hand2",
         )
-        self.favorite_button.pack(side="left")
         self.remove_command_button = tk.Button(
             self.footer, text="Remove command", command=self.remove_custom_command,
-            bg=PANEL, fg=ACCENT, relief="flat", font=("Segoe UI", 8, "bold"),
-            padx=8, pady=5,
+            bg=c["panel"], fg=c["accent"], relief="flat", font=("Segoe UI", 8, "bold"),
+            padx=10, pady=7, cursor="hand2",
         )
-        self.remove_command_button.pack(side="left", padx=6)
-        tk.Label(self.footer, text="↑ ↓ Navigate   ENTER Open   ESC Clear",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="left", padx=10)
-        self.hotkey_label = tk.Label(self.footer, text=self.settings["hotkey"].upper(),
-                                     bg=BG, fg=ACCENT, font=("Segoe UI", 8, "bold"))
-        self.hotkey_label.pack(side="right")
+        self.remove_command_button.pack_forget()
+        self.footer_hint = tk.Label(
+            self.footer, text="↑ ↓ Move     ENTER Open     ESC Clear",
+            bg=c["bg"], fg=c["muted"], font=("Segoe UI", 8),
+        )
+        self.hotkey_label = self.header_hotkey_label
 
-        self.settings_frame = tk.Frame(self.root, bg=BG)
+        self.settings_frame = tk.Frame(self.main, bg=c["bg"])
         self.build_settings_ui()
         self.apply_theme()
         self.update_tabs()
@@ -298,7 +355,8 @@ class CMDPal:
             self.settings_frame, bg=c["bg"], highlightthickness=0, borderwidth=0
         )
         scrollbar = ttk.Scrollbar(
-            self.settings_frame, orient="vertical", command=self.settings_canvas.yview
+            self.settings_frame, orient="vertical", command=self.settings_canvas.yview,
+            style="CMD.Vertical.TScrollbar",
         )
         self.settings_canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
@@ -390,6 +448,7 @@ class CMDPal:
         tk.Button(self.settings_content, text="SAVE SETTINGS", command=self.apply_settings,
                   bg=c["accent"], fg=c["bg"], relief="flat", padx=12, pady=7
                   ).pack(anchor="w", pady=(0, 10))
+        self.bind_settings_mousewheel(self.settings_content)
 
     def settings_section(self, parent, title):
         c = self.palette()
@@ -398,6 +457,16 @@ class CMDPal:
             font=("Segoe UI", 8, "bold"), padx=10, pady=8,
             bd=1, relief="solid", labelanchor="nw",
         )
+
+    def bind_settings_mousewheel(self, widget):
+        widget.bind("<MouseWheel>", self.scroll_settings, add="+")
+        for child in widget.winfo_children():
+            self.bind_settings_mousewheel(child)
+
+    def scroll_settings(self, event):
+        if self.mode == "settings":
+            self.settings_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            return "break"
 
     def startup_command(self):
         frozen = getattr(sys, "frozen", False)
@@ -538,8 +607,8 @@ class CMDPal:
         self.settings["hotkey"] = shortcut
         saved = self.save_settings()
         self.apply_theme()
+        self.update_tabs()
         self.hotkey_label.config(text=shortcut.upper())
-        self.header_hotkey_label.config(text=shortcut.upper())
         if os.name == "nt":
             self.restart_hotkey()
         if startup_error:
@@ -552,18 +621,12 @@ class CMDPal:
 
     def apply_theme(self):
         c = self.palette()
-        self.ttk_style.configure(
-            "TCombobox", fieldbackground=c["panel"], background=c["panel"],
-            foreground=c["text"], arrowcolor=c["accent"],
-        )
-        self.ttk_style.map(
-            "TCombobox", fieldbackground=[("readonly", c["panel"])],
-            selectbackground=[("readonly", c["selected"])],
-            selectforeground=[("readonly", c["text"])],
-        )
-        mapping = {BG: c["bg"], PANEL: c["panel"], ACCENT: c["accent"],
-                   TEXT: c["text"], MUTED: c["muted"], SELECTED: c["selected"],
-                   "#344153": c["panel"]}
+        self.configure_ttk_theme()
+        mapping = {
+            BG: c["bg"], PANEL: c["panel"], SIDEBAR: c["sidebar"],
+            BORDER: c["border"], ACCENT: c["accent"], TEXT: c["text"],
+            MUTED: c["muted"], SELECTED: c["selected"], "#344153": c["border"],
+        }
 
         def recolor(widget):
             for option in ("bg", "fg", "activebackground", "activeforeground",
@@ -579,6 +642,29 @@ class CMDPal:
                 recolor(child)
 
         recolor(self.root)
+
+    def configure_ttk_theme(self):
+        c = self.palette()
+        self.ttk_style.configure(
+            "TCombobox", fieldbackground=c["panel"], background=c["panel"],
+            foreground=c["text"], arrowcolor=c["accent"],
+        )
+        self.ttk_style.map(
+            "TCombobox", fieldbackground=[("readonly", c["panel"])],
+            selectbackground=[("readonly", c["selected"])],
+            selectforeground=[("readonly", c["text"])],
+        )
+        self.ttk_style.configure(
+            "CMD.Vertical.TScrollbar",
+            background=c["scroll_thumb"], troughcolor=c["scroll_trough"],
+            bordercolor=c["scroll_trough"], arrowcolor=c["muted"],
+            darkcolor=c["scroll_thumb"], lightcolor=c["scroll_thumb"],
+            gripcount=0, width=13,
+        )
+        self.ttk_style.map(
+            "CMD.Vertical.TScrollbar",
+            background=[("pressed", c["scroll_active"]), ("active", c["scroll_active"])],
+        )
 
     def restart_hotkey(self):
         if self.hotkey_thread_id:
@@ -670,8 +756,12 @@ class CMDPal:
         c = self.palette()
         for mode, button in self.tab_buttons.items():
             active = mode == self.mode
-            button.config(bg=c["accent"] if active else c["panel"],
-                          fg=c["bg"] if active else c["text"])
+            button.config(
+                bg=c["selected"] if active else c["sidebar"],
+                fg=c["accent"] if active else c["muted"],
+                activebackground=c["selected"] if active else c["sidebar"],
+                activeforeground=c["accent"] if active else c["text"],
+            )
 
     def update_mode_panels(self):
         self.folder_frame.pack_forget()
@@ -679,32 +769,45 @@ class CMDPal:
         self.tools_frame.pack_forget()
         self.settings_frame.pack_forget()
         self.search_frame.pack_forget()
-        self.status.pack_forget()
+        self.status_row.pack_forget()
         self.result_outer.pack_forget()
         self.footer.pack_forget()
         if self.mode == "settings":
-            self.settings_frame.pack(fill="both", expand=True, padx=25, pady=8)
+            self.settings_frame.pack(fill="both", expand=True)
             return
         if self.mode in ("apps", "favorites", "files", "commands", "tools"):
-            self.search_frame.pack(fill="x", padx=25, pady=7)
+            self.search_frame.pack(fill="x", pady=(0, 9))
             if self.mode == "files":
-                self.folder_frame.pack(fill="x", padx=25, pady=5)
+                self.folder_frame.pack(fill="x", pady=5)
             elif self.mode == "commands":
-                self.commands_frame.pack(fill="x", padx=25, pady=3)
+                self.commands_frame.pack(fill="x", pady=3)
             elif self.mode == "tools":
-                self.tools_frame.pack(fill="x", padx=25, pady=3)
-            self.status.pack(fill="x", padx=29, pady=5)
-            self.result_outer.pack(fill="both", expand=True, padx=25, pady=(0, 10))
-            self.footer.pack(fill="x", padx=25, pady=(0, 10))
+                self.tools_frame.pack(fill="x", pady=3)
+            self.status_row.pack(fill="x")
+            self.result_outer.pack(fill="both", expand=True)
+            self.footer.pack(fill="x", pady=(10, 0))
             self.favorite_button.pack_forget()
             self.remove_command_button.pack_forget()
+            self.footer_hint.pack_forget()
             if self.mode in ("apps", "favorites"):
                 self.favorite_button.pack(side="left")
             if self.mode == "commands":
                 self.remove_command_button.pack(side="left", padx=6)
+            self.footer_hint.pack(side="left", padx=12)
 
     def change_mode(self, mode):
         self.mode = mode
+        headings = {
+            "apps": ("Apps", "Find and launch something quickly."),
+            "favorites": ("Favorites", "Your saved apps and shortcuts."),
+            "files": ("Files", "Search files in a folder you choose."),
+            "commands": ("Shortcuts", "Create quick links to websites and programs."),
+            "tools": ("Tools", "Calculate safely or search the web."),
+            "settings": ("Settings", "Tune CMD Pal to fit your workflow."),
+        }
+        title, subtitle = headings[mode]
+        self.page_title_label.config(text=title)
+        self.page_subtitle_label.config(text=subtitle)
         self.generation += 1
         self.search.delete(0, "end")
         self.results = []
@@ -746,6 +849,9 @@ class CMDPal:
     def set_results(self, results):
         self.results = results[:100]
         self.selected = 0
+        self.result_count_label.config(
+            text=f"{len(self.results)} results" if self.results else ""
+        )
         self.listbox.delete(0, "end")
         for name, target, kind in self.results:
             mark = "★ " if target in self.settings["favorites"] else ""

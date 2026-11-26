@@ -21,6 +21,10 @@ pythonw .\CMD_Pal.py
 On Windows, the default global launcher shortcut is `Shift+?`; it can be
 changed from **Settings**.
 
+The interface uses a persistent left navigation rail, a larger search/results
+workspace, and visible vertical scrollbars with position thumbs in both results
+and Settings. The mouse wheel scrolls the Settings page.
+
 ## Windows executable
 
 Run `.\build.ps1` in PowerShell on Windows to build the standalone,
