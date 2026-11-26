@@ -10,7 +10,7 @@ import tkinter as tk
 import webbrowser
 from ctypes import wintypes
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import colorchooser, filedialog, ttk
 from urllib.parse import quote_plus, urlparse
 
 try:
@@ -30,6 +30,60 @@ SELECTED = "#234b3b"
 HIBERNATE_COMMAND = "__CMD_HIBERNATE__"
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_REGISTRY_NAME = "CMDPal"
+ACCENT_PRESETS = {
+    "Mint": "#75f0ad",
+    "Blue": "#76a9ff",
+    "Violet": "#c18cff",
+    "Amber": "#ffc46b",
+    "Rose": "#ff83a8",
+}
+FILE_ICON_TYPES = {
+    ".pdf": "pdf",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
+    ".bmp": "image", ".webp": "image", ".svg": "image", ".ico": "image",
+    ".mp4": "video", ".mkv": "video", ".mov": "video", ".avi": "video",
+    ".mp3": "audio", ".wav": "audio", ".flac": "audio", ".m4a": "audio",
+    ".zip": "archive", ".7z": "archive", ".rar": "archive", ".tar": "archive",
+    ".py": "code", ".js": "code", ".ts": "code", ".html": "code",
+    ".css": "code", ".json": "code", ".go": "code", ".rs": "code",
+    ".exe": "executable", ".msi": "executable", ".bat": "code", ".ps1": "code",
+    ".doc": "document", ".docx": "document", ".txt": "document", ".rtf": "document",
+    ".xls": "spreadsheet", ".xlsx": "spreadsheet", ".csv": "spreadsheet",
+    ".ppt": "presentation", ".pptx": "presentation",
+}
+
+
+def result_icon_type(name, target, kind, custom_commands=()):
+    if kind == "file":
+        return FILE_ICON_TYPES.get(Path(name).suffix.lower(), "document")
+    if kind == "hibernate":
+        return "power"
+    if kind == "result":
+        return "calculator"
+    if kind == "command":
+        for command in custom_commands:
+            if target == "cmdpal:" + command["type"] + ":" + command["name"]:
+                return "website" if command["type"] == "website" else "app"
+        return "website"
+    lowered = name.lower()
+    if any(term in lowered for term in ("chrome", "firefox", "browser", "edge", "opera")):
+        return "browser"
+    if any(term in lowered for term in ("music", "spotify", "audio")):
+        return "audio"
+    if any(term in lowered for term in ("video", "movie", "vlc")):
+        return "video"
+    if any(term in lowered for term in ("photo", "paint", "image")):
+        return "image"
+    return "app"
+
+
+def blend_colors(background, foreground, ratio):
+    bg = tuple(int(background[index:index + 2], 16) for index in (1, 3, 5))
+    fg = tuple(int(foreground[index:index + 2], 16) for index in (1, 3, 5))
+    return "#" + "".join(
+        f"{round(bg[index] * (1 - ratio) + fg[index] * ratio):02x}"
+        for index in range(3)
+    )
 
 
 def calculate(expression):
@@ -96,6 +150,13 @@ def build_startup_command(executable, script_path, frozen, pythonw_path=None):
     ])
 
 
+def is_hex_color(value):
+    return (
+        isinstance(value, str) and len(value) == 7 and value.startswith("#")
+        and all(character in "0123456789abcdefABCDEF" for character in value[1:])
+    )
+
+
 class CMDPal:
     def __init__(self):
         self.root = tk.Tk()
@@ -115,6 +176,10 @@ class CMDPal:
         self.config_path = Path(os.environ.get("APPDATA", str(Path.home()))) / "CMDPal" / "settings.json"
         self.settings = {
             "theme": "dark",
+            "accent": "Mint",
+            "custom_accent": ACCENT_PRESETS["Mint"],
+            "density": "Comfortable",
+            "show_icons": True,
             "hotkey": "Shift+?",
             "favorites": [],
             "recent": [],
@@ -137,16 +202,21 @@ class CMDPal:
             self.root.after(0, self.root.iconify)
 
     def palette(self):
+        accent_name = self.settings.get("accent", "Mint")
+        accent = (self.settings.get("custom_accent", ACCENT_PRESETS["Mint"])
+                  if accent_name == "Custom"
+                  else ACCENT_PRESETS.get(accent_name, ACCENT_PRESETS["Mint"]))
         if self.settings["theme"] == "light":
             return {
-                "bg": "#f3f5fa", "panel": "#ffffff", "accent": "#176b4b",
-                "text": "#182235", "muted": "#647084", "selected": "#d5eee2",
+                "bg": "#f3f5fa", "panel": "#ffffff", "accent": accent,
+                "text": "#182235", "muted": "#647084",
+                "selected": blend_colors("#ffffff", accent, 0.15),
                 "sidebar": "#e9edf4", "border": "#d4dbe6",
                 "scroll_trough": "#e2e7ef", "scroll_thumb": "#9ba6b7",
                 "scroll_active": "#748197",
             }
-        return {"bg": BG, "panel": PANEL, "accent": ACCENT,
-                "text": TEXT, "muted": MUTED, "selected": SELECTED,
+        return {"bg": BG, "panel": PANEL, "accent": accent,
+                "text": TEXT, "muted": MUTED, "selected": blend_colors(PANEL, accent, 0.24),
                 "sidebar": SIDEBAR, "border": BORDER,
                 "scroll_trough": "#111722", "scroll_thumb": "#697587",
                 "scroll_active": "#98a3b4"}
@@ -279,12 +349,14 @@ class CMDPal:
         self.result_outer = tk.Frame(self.main, bg=c["border"], padx=1, pady=1)
         inner = tk.Frame(self.result_outer, bg=c["panel"])
         inner.pack(fill="both", expand=True)
-        self.listbox = tk.Listbox(
-            inner, bg=c["panel"], fg=c["text"], selectbackground=c["selected"],
-            selectforeground=c["accent"], font=("Segoe UI", 11),
-            relief="flat", borderwidth=0, highlightthickness=0,
-            activestyle="none", exportselection=False,
+        self.listbox = ttk.Treeview(
+            inner, columns=("type",), show="tree headings",
+            style="CMD.Treeview", selectmode="browse",
         )
+        self.listbox.heading("#0", text="Name", anchor="w")
+        self.listbox.heading("type", text="TYPE", anchor="w")
+        self.listbox.column("#0", anchor="w", width=450, minwidth=200, stretch=True)
+        self.listbox.column("type", anchor="w", width=130, minwidth=100, stretch=False)
         self.listbox.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
         self.list_scrollbar = ttk.Scrollbar(
             inner, orient="vertical", command=self.listbox.yview,
@@ -292,7 +364,10 @@ class CMDPal:
         )
         self.listbox.configure(yscrollcommand=self.list_scrollbar.set)
         self.list_scrollbar.pack(side="right", fill="y", padx=(4, 8), pady=10)
+        self.listbox.bind("<<TreeviewSelect>>", self.on_tree_select)
         self.listbox.bind("<Double-Button-1>", self.launch_selected)
+        self.icon_cache = {}
+        self.result_images = []
 
         self.footer = tk.Frame(self.main, bg=c["bg"])
         self.favorite_button = tk.Button(
@@ -392,6 +467,51 @@ class CMDPal:
                            bg=c["panel"], fg=c["text"], selectcolor=c["bg"],
                            activebackground=c["panel"]).pack(side="left", padx=(0, 12))
 
+        customize = self.settings_section(self.settings_content, "PERSONALIZE")
+        customize.pack(fill="x", pady=4)
+        customize_row = tk.Frame(customize, bg=c["panel"])
+        customize_row.pack(fill="x")
+        self.accent_var = tk.StringVar(value=self.settings["accent"])
+        self.pending_custom_accent = self.settings["custom_accent"]
+        tk.Label(customize_row, text="Accent color", bg=c["panel"], fg=c["text"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
+        accent_picker = ttk.Combobox(
+            customize_row, textvariable=self.accent_var,
+            values=tuple(ACCENT_PRESETS) + ("Custom",), width=12, state="readonly",
+        )
+        accent_picker.pack(side="left")
+        accent_picker.bind("<<ComboboxSelected>>", self.update_accent_preview)
+        self.accent_swatch = tk.Label(
+            customize_row, text="   ", bg=self.pending_custom_accent, relief="solid", bd=1
+        )
+        self.accent_swatch.pack(side="left", padx=7)
+        tk.Button(
+            customize_row, text="Choose color…", command=self.choose_accent_color,
+            bg=c["bg"], fg=c["text"], activebackground=c["selected"],
+            relief="flat", padx=9, pady=5, cursor="hand2",
+        ).pack(side="left", padx=(2, 0))
+        density_row = tk.Frame(customize, bg=c["panel"])
+        density_row.pack(fill="x", pady=(8, 0))
+        tk.Label(density_row, text="Result spacing", bg=c["panel"], fg=c["text"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
+        self.density_var = tk.StringVar(value=self.settings["density"])
+        ttk.Combobox(
+            density_row, textvariable=self.density_var,
+            values=("Comfortable", "Compact"), width=12, state="readonly",
+        ).pack(side="left")
+        self.show_icons_var = tk.BooleanVar(value=self.settings["show_icons"])
+        tk.Checkbutton(
+            customize, text="Show app and file type icons",
+            variable=self.show_icons_var, bg=c["panel"], fg=c["text"],
+            selectcolor=c["bg"], activebackground=c["panel"],
+            activeforeground=c["text"], font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(7, 0))
+        tk.Label(
+            customize,
+            text="Choose a color preset or pick your own. Icons identify app and file types.",
+            bg=c["panel"], fg=c["muted"], font=("Segoe UI", 8),
+        ).pack(anchor="w", pady=(2, 0))
+
         shortcut = self.settings_section(self.settings_content, "LAUNCH SHORTCUT")
         shortcut.pack(fill="x", pady=4)
         tk.Label(shortcut, text="Global hotkey", bg=c["panel"], fg=c["text"],
@@ -449,6 +569,21 @@ class CMDPal:
                   bg=c["accent"], fg=c["bg"], relief="flat", padx=12, pady=7
                   ).pack(anchor="w", pady=(0, 10))
         self.bind_settings_mousewheel(self.settings_content)
+
+    def choose_accent_color(self):
+        chosen = colorchooser.askcolor(
+            color=self.pending_custom_accent, title="Choose CMD Pal accent color",
+            parent=self.root,
+        )[1]
+        if chosen:
+            self.pending_custom_accent = chosen.lower()
+            self.accent_var.set("Custom")
+            self.accent_swatch.configure(bg=self.pending_custom_accent)
+
+    def update_accent_preview(self, event=None):
+        preset = self.accent_var.get()
+        color = self.pending_custom_accent if preset == "Custom" else ACCENT_PRESETS[preset]
+        self.accent_swatch.configure(bg=color)
 
     def settings_section(self, parent, title):
         c = self.palette()
@@ -511,6 +646,14 @@ class CMDPal:
                     return
                 if data.get("theme") in ("dark", "light"):
                     self.settings["theme"] = data["theme"]
+                if data.get("accent") in tuple(ACCENT_PRESETS) + ("Custom",):
+                    self.settings["accent"] = data["accent"]
+                if is_hex_color(data.get("custom_accent")):
+                    self.settings["custom_accent"] = data["custom_accent"].lower()
+                if data.get("density") in ("Comfortable", "Compact"):
+                    self.settings["density"] = data["density"]
+                if isinstance(data.get("show_icons"), bool):
+                    self.settings["show_icons"] = data["show_icons"]
                 if isinstance(data.get("hotkey"), str):
                     self.settings["hotkey"] = data["hotkey"]
                 if isinstance(data.get("run_on_startup"), bool):
@@ -595,6 +738,13 @@ class CMDPal:
         except ValueError as error:
             self.settings_message.config(text=str(error))
             return
+        accent = self.accent_var.get()
+        if accent not in tuple(ACCENT_PRESETS) + ("Custom",):
+            self.settings_message.config(text="Choose a valid accent color.")
+            return
+        if accent == "Custom" and not is_hex_color(self.pending_custom_accent):
+            self.settings_message.config(text="Choose a valid custom accent color.")
+            return
         startup_error = None
         try:
             self.set_startup_enabled(self.startup_var.get())
@@ -605,10 +755,15 @@ class CMDPal:
             startup_error = error
         self.settings["theme"] = self.theme_var.get().lower()
         self.settings["hotkey"] = shortcut
+        self.settings["accent"] = accent
+        self.settings["custom_accent"] = self.pending_custom_accent
+        self.settings["density"] = self.density_var.get()
+        self.settings["show_icons"] = self.show_icons_var.get()
         saved = self.save_settings()
         self.apply_theme()
         self.update_tabs()
         self.hotkey_label.config(text=shortcut.upper())
+        self.update_accent_preview()
         if os.name == "nt":
             self.restart_hotkey()
         if startup_error:
@@ -622,11 +777,8 @@ class CMDPal:
     def apply_theme(self):
         c = self.palette()
         self.configure_ttk_theme()
-        mapping = {
-            BG: c["bg"], PANEL: c["panel"], SIDEBAR: c["sidebar"],
-            BORDER: c["border"], ACCENT: c["accent"], TEXT: c["text"],
-            MUTED: c["muted"], SELECTED: c["selected"], "#344153": c["border"],
-        }
+        previous = getattr(self, "displayed_palette", c)
+        mapping = {previous[key]: c[key] for key in c if key in previous}
 
         def recolor(widget):
             for option in ("bg", "fg", "activebackground", "activeforeground",
@@ -642,9 +794,29 @@ class CMDPal:
                 recolor(child)
 
         recolor(self.root)
+        self.displayed_palette = c
+        if hasattr(self, "icon_cache"):
+            self.icon_cache.clear()
+            self.set_results(self.results)
 
     def configure_ttk_theme(self):
         c = self.palette()
+        row_height = 38 if self.settings.get("density") == "Comfortable" else 30
+        self.ttk_style.configure(
+            "CMD.Treeview",
+            background=c["panel"], fieldbackground=c["panel"], foreground=c["text"],
+            rowheight=row_height, borderwidth=0, font=("Segoe UI", 10),
+        )
+        self.ttk_style.configure(
+            "CMD.Treeview.Heading",
+            background=c["sidebar"], foreground=c["muted"],
+            font=("Segoe UI", 8, "bold"), relief="flat", padding=(8, 8),
+        )
+        self.ttk_style.map(
+            "CMD.Treeview",
+            background=[("selected", c["selected"])],
+            foreground=[("selected", c["accent"])],
+        )
         self.ttk_style.configure(
             "TCombobox", fieldbackground=c["panel"], background=c["panel"],
             foreground=c["text"], arrowcolor=c["accent"],
@@ -812,7 +984,9 @@ class CMDPal:
         self.search.delete(0, "end")
         self.results = []
         self.selected = 0
-        self.listbox.delete(0, "end")
+        children = self.listbox.get_children()
+        if children:
+            self.listbox.delete(*children)
         self.update_mode_panels()
         self.update_tabs()
         if mode in ("apps", "favorites"):
@@ -852,11 +1026,126 @@ class CMDPal:
         self.result_count_label.config(
             text=f"{len(self.results)} results" if self.results else ""
         )
-        self.listbox.delete(0, "end")
-        for name, target, kind in self.results:
-            mark = "★ " if target in self.settings["favorites"] else ""
-            self.listbox.insert("end", "   " + mark + name)
+        children = self.listbox.get_children()
+        if children:
+            self.listbox.delete(*children)
+        self.result_images = []
+        for index, (name, target, kind) in enumerate(self.results):
+            image = None
+            if self.settings["show_icons"]:
+                image = self.result_icon(name, target, kind)
+                self.result_images.append(image)
+            favorite_mark = "★  " if target in self.settings["favorites"] else ""
+            item_options = {
+                "iid": str(index),
+                "text": favorite_mark + name,
+                "values": (self.result_kind_label(name, target, kind),),
+            }
+            if image is not None:
+                item_options["image"] = image
+            self.listbox.insert("", "end", **item_options)
         self.highlight_result()
+
+    def result_kind_label(self, name, target, kind):
+        if kind == "file":
+            extension = Path(name).suffix.upper().lstrip(".")
+            return extension or "FILE"
+        return {
+            "app": "APP", "command": "SHORTCUT", "hibernate": "SYSTEM",
+            "result": "RESULT",
+        }.get(kind, kind.upper())
+
+    def result_icon(self, name, target, kind):
+        icon_type = result_icon_type(
+            name, target, kind, self.settings["custom_commands"]
+        )
+        key = (icon_type, self.palette()["panel"], self.palette()["accent"])
+        if key in self.icon_cache:
+            return self.icon_cache[key]
+
+        c = self.palette()
+        color = {
+            "browser": "#75a7ff", "pdf": "#fb7474", "image": "#78c68b",
+            "video": "#f0a75c", "audio": "#c18cff", "archive": "#d2ac70",
+            "code": "#5fc2c2", "executable": "#77a9ff", "document": "#8faef1",
+            "spreadsheet": "#63bd82", "presentation": "#ff9b72",
+            "power": "#ff886e", "website": "#76a9ff",
+        }.get(icon_type, c["accent"])
+        image = tk.PhotoImage(master=self.root, width=20, height=20)
+        image.put(c["panel"], to=(0, 0, 20, 20))
+
+        def rectangle(x1, y1, x2, y2, fill):
+            image.put(fill, to=(x1, y1, x2, y2))
+
+        if icon_type in ("document", "pdf", "spreadsheet", "presentation"):
+            rectangle(4, 2, 15, 18, color)
+            rectangle(6, 4, 13, 16, c["panel"])
+            rectangle(7, 7, 13, 8, color)
+            rectangle(7, 10, 13, 11, color)
+            rectangle(7, 13, 12, 14, color)
+            if icon_type == "spreadsheet":
+                rectangle(9, 6, 10, 15, color)
+                rectangle(6, 9, 13, 10, color)
+            elif icon_type == "presentation":
+                rectangle(7, 6, 12, 7, color)
+                rectangle(8, 8, 9, 12, color)
+                rectangle(11, 8, 12, 12, color)
+        elif icon_type == "image":
+            rectangle(2, 4, 18, 17, color)
+            rectangle(4, 6, 16, 15, c["panel"])
+            rectangle(6, 8, 9, 11, "#ffc46b")
+            for x, y in ((4, 14), (5, 13), (6, 12), (7, 11), (8, 12),
+                         (9, 13), (10, 12), (11, 11), (12, 12), (13, 13),
+                         (14, 14), (15, 14)):
+                rectangle(x, y, x + 1, y + 1, color)
+        elif icon_type in ("browser", "website"):
+            for y in range(2, 18):
+                for x in range(2, 18):
+                    if (x - 10) ** 2 + (y - 10) ** 2 <= 64:
+                        image.put(color, to=(x, y))
+            for x, y in ((7, 5), (8, 4), (9, 3), (10, 3), (11, 4),
+                         (12, 5), (7, 14), (8, 15), (9, 16), (10, 16),
+                         (11, 15), (12, 14)):
+                rectangle(x, y, x + 1, y + 1, c["panel"])
+            rectangle(3, 9, 17, 11, c["panel"])
+            rectangle(9, 3, 11, 17, c["panel"])
+        elif icon_type == "video":
+            rectangle(2, 4, 18, 16, color)
+            for x, y in ((8, 7), (9, 8), (10, 9), (11, 10),
+                         (10, 11), (9, 12), (8, 13)):
+                rectangle(x, y, x + 1, y + 1, c["panel"])
+        elif icon_type == "audio":
+            for x, top, bottom in ((3, 8, 12), (6, 5, 15), (9, 2, 18),
+                                   (12, 5, 15), (15, 8, 12)):
+                rectangle(x, top, x + 2, bottom, color)
+        elif icon_type == "archive":
+            rectangle(4, 2, 16, 18, color)
+            rectangle(8, 2, 12, 18, c["panel"])
+            for y in (4, 7, 10, 13):
+                rectangle(8, y, 12, y + 1, color)
+        elif icon_type == "code":
+            for x, y in ((7, 5), (6, 6), (5, 7), (4, 8), (5, 9), (6, 10),
+                         (13, 5), (14, 6), (15, 7), (16, 8), (15, 9), (14, 10),
+                         (11, 4), (10, 7), (9, 10), (8, 13)):
+                rectangle(x, y, x + 2, y + 2, color)
+        elif icon_type == "power":
+            for x, y in ((9, 2), (9, 4), (9, 6), (5, 5), (4, 7), (3, 9),
+                         (3, 11), (4, 13), (6, 15), (8, 16), (11, 16),
+                         (14, 15), (16, 13), (17, 11), (16, 8), (14, 6)):
+                rectangle(x, y, x + 2, y + 2, color)
+        elif icon_type == "calculator":
+            rectangle(3, 2, 17, 18, color)
+            rectangle(5, 4, 15, 7, c["panel"])
+            for x, y in ((5, 9), (10, 9), (5, 13), (10, 13)):
+                rectangle(x, y, x + 3, y + 2, c["panel"])
+        else:
+            rectangle(3, 3, 17, 17, color)
+            rectangle(5, 5, 15, 7, c["panel"])
+            rectangle(5, 9, 15, 10, c["panel"])
+            rectangle(5, 12, 12, 13, c["panel"])
+
+        self.icon_cache[key] = image
+        return image
 
     def search_apps(self):
         query = self.search.get().strip().lower()
@@ -1008,11 +1297,19 @@ class CMDPal:
             self.status.config(text=f"Could not open web search: {error}")
 
     def highlight_result(self):
-        self.listbox.selection_clear(0, "end")
+        selection = self.listbox.selection()
+        if selection:
+            self.listbox.selection_remove(*selection)
         if self.results:
-            self.listbox.selection_set(self.selected)
-            self.listbox.activate(self.selected)
-            self.listbox.see(self.selected)
+            item = str(self.selected)
+            self.listbox.selection_set(item)
+            self.listbox.focus(item)
+            self.listbox.see(item)
+
+    def on_tree_select(self, event=None):
+        selection = self.listbox.selection()
+        if selection:
+            self.selected = int(selection[0])
 
     def move_up(self, event=None):
         if self.results:

@@ -2,7 +2,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from CMD_Pal import build_startup_command, calculate
+from CMD_Pal import (
+    ACCENT_PRESETS,
+    blend_colors,
+    build_startup_command,
+    calculate,
+    is_hex_color,
+    result_icon_type,
+)
 
 
 class CalculatorTests(unittest.TestCase):
@@ -46,6 +53,27 @@ class StartupCommandTests(unittest.TestCase):
     def test_source_startup_requires_pythonw(self):
         with self.assertRaises(OSError):
             build_startup_command("python.exe", "CMD_Pal.py", False)
+
+
+class AppearanceTests(unittest.TestCase):
+    def test_file_icons_follow_file_type(self):
+        self.assertEqual(result_icon_type("photo.png", "photo.png", "file"), "image")
+        self.assertEqual(result_icon_type("notes.txt", "notes.txt", "file"), "document")
+        self.assertEqual(result_icon_type("main.py", "main.py", "file"), "code")
+
+    def test_app_and_custom_shortcut_icons(self):
+        self.assertEqual(result_icon_type("Firefox", "firefox.exe", "app"), "browser")
+        website = [{"name": "Docs", "type": "website"}]
+        self.assertEqual(
+            result_icon_type("Docs", "cmdpal:website:Docs", "command", website),
+            "website",
+        )
+
+    def test_accent_presets_and_color_validation(self):
+        self.assertEqual(blend_colors("#ffffff", ACCENT_PRESETS["Blue"], 0), "#ffffff")
+        self.assertTrue(is_hex_color("#a1B2c3"))
+        self.assertFalse(is_hex_color("blue"))
+        self.assertFalse(is_hex_color("#12345g"))
 
 
 if __name__ == "__main__":

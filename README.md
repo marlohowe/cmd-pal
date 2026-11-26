@@ -21,6 +21,11 @@ pythonw .\CMD_Pal.py
 On Windows, the default global launcher shortcut is `Shift+?`; it can be
 changed from **Settings**.
 
+The results view shows compact app/file-type icons and a type label for each
+item. In **Settings → Personalize**, choose dark/light appearance, a preset or
+custom accent color, comfortable/compact result spacing, and whether icons are
+shown. These preferences are saved locally.
+
 The interface uses a persistent left navigation rail, a larger search/results
 workspace, and visible vertical scrollbars with position thumbs in both results
 and Settings. The mouse wheel scrolls the Settings page.
