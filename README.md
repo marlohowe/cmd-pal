@@ -19,7 +19,10 @@ pythonw .\CMD_Pal.py
 ```
 
 On Windows, the default global launcher shortcut is `Shift+?`; it can be
-changed from **Settings**.
+changed from **Settings**. It opens a compact launcher with a search field and
+icons for each tab. Choose a tab icon or type a query and press Enter to bring
+the full app forward on that screen. The full workspace remains on its current
+screen when hidden or reopened.
 
 The results view shows compact app/file-type icons and a type label for each
 item. In **Settings → Personalize**, choose dark/light appearance, a preset or
@@ -35,6 +38,28 @@ and Settings. The mouse wheel scrolls the Settings page.
 Run `.\build.ps1` in PowerShell on Windows to build the standalone,
 no-console executable at `dist\CMD-Pal.exe`. The script installs the pinned
 PyInstaller build dependency from `requirements-build.txt`.
+
+### Authenticode signing and SmartScreen
+
+The build is unsigned by default. To sign it, obtain a code-signing certificate
+from a trusted certificate authority, install it with its private key in the
+current Windows user's `Personal` certificate store (`CurrentUser\My`), and
+set `CMDPAL_SIGNING_CERT_THUMBPRINT` to its 40-character thumbprint before
+running `.\build.ps1`. The script signs with SHA-256, adds an RFC 3161 timestamp,
+and verifies the signature. For example:
+
+```powershell
+$env:CMDPAL_SIGNING_CERT_THUMBPRINT = "YOUR_CERTIFICATE_THUMBPRINT"
+.\build.ps1
+```
+
+Keep the certificate's private key secure; never commit or upload it to the
+repository. A self-signed certificate does not establish a trusted publisher.
+Signing identifies the publisher, but does not guarantee that SmartScreen will
+stop warning: Microsoft reputation checks can still warn on new or uncommon
+downloads, and reputation is affected by the certificate and download history.
+Use a certificate issued to the actual publisher and distribute the exact
+signed executable; rebuilding or modifying it invalidates its signature.
 
 The `.py` source remains available as `CMD_Pal.py`. The packaged app and source
 are published together in the repository's GitHub Releases.

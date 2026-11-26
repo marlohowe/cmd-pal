@@ -96,20 +96,20 @@ class UpdateVersionTests(unittest.TestCase):
     def test_detects_new_release_and_validates_download_metadata(self):
         digest = "a" * 64
         update = parse_release_update({
-            "tag_name": "v1.4.0",
+            "tag_name": "v1.5.0",
             "assets": [{
                 "name": "CMD-Pal.exe",
-                "browser_download_url": "https://github.com/marlohowe/cmd-pal/releases/download/v1.4.0/CMD-Pal.exe",
+                "browser_download_url": "https://github.com/marlohowe/cmd-pal/releases/download/v1.5.0/CMD-Pal.exe",
                 "digest": "sha256:" + digest,
             }],
         })
-        self.assertEqual(update["tag"], "v1.4.0")
+        self.assertEqual(update["tag"], "v1.5.0")
         self.assertEqual(update["digest"], digest)
 
     def test_reports_no_update_and_rejects_untrusted_downloads(self):
         self.assertIsNone(parse_release_update({"tag_name": "v1.2.0", "assets": []}))
         unsafe_release = {
-            "tag_name": "v1.4.0",
+            "tag_name": "v1.5.0",
             "assets": [{
                 "name": "CMD-Pal.exe",
                 "browser_download_url": "https://example.com/CMD-Pal.exe",

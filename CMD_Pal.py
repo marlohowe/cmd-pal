@@ -33,7 +33,7 @@ SELECTED = "#234b3b"
 HIBERNATE_COMMAND = "__CMD_HIBERNATE__"
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_REGISTRY_NAME = "CMDPal"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 LATEST_RELEASE_API = "https://api.github.com/repos/marlohowe/cmd-pal/releases/latest"
 MAX_UPDATE_BYTES = 150 * 1024 * 1024
 ACCENT_PRESETS = {
@@ -271,6 +271,7 @@ class CMDPal:
         self.generation = 0
         self.hotkey_thread_id = None
         self.closing = False
+        self.quick_window = None
         self.updated_launch = "--migrate-startup" in sys.argv[1:]
         self.hotkey_retry_scheduled = False
         self.config_path = Path(os.environ.get("APPDATA", str(Path.home()))) / "CMDPal" / "settings.json"
@@ -389,7 +390,7 @@ class CMDPal:
             bg=c["sidebar"], fg=c["accent"], font=("Segoe UI", 11, "bold")
         )
         self.header_hotkey_label.pack(anchor="w", pady=(4, 2))
-        tk.Label(sidebar_footer, text="Press anywhere to show CMD Pal",
+        tk.Label(sidebar_footer, text="Press anywhere to open quick launcher",
                  bg=c["sidebar"], fg=c["muted"], font=("Segoe UI", 8),
                  wraplength=175, justify="left").pack(anchor="w")
 
@@ -1100,28 +1101,125 @@ class CMDPal:
         try:
             while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
                 if message.message == 0x0312:
-                    self.root.after(0, self.toggle_window)
+                    self.root.after(0, self.toggle_quick_launcher)
         finally:
             user32.UnregisterHotKey(None, 1)
 
-    def toggle_window(self):
+    def toggle_quick_launcher(self):
         if self.closing:
             return
-        if self.root.state() == "withdrawn":
-            self.root.deiconify()
-            self.root.lift()
-            self.root.attributes("-topmost", True)
-            self.root.after(120, self.focus_search)
-            self.root.after(700, lambda: self.root.attributes("-topmost", False))
-        else:
-            self.root.withdraw()
+        if self.quick_window and self.quick_window.winfo_exists():
+            self.close_quick_launcher()
+            return
 
-    def focus_search(self):
+        c = self.palette()
+        window = tk.Toplevel(self.root)
+        self.quick_window = window
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+        window.configure(bg=c["border"])
+        window.geometry("620x70")
+        window.update_idletasks()
+        x = (window.winfo_screenwidth() - 620) // 2
+        y = max(24, (window.winfo_screenheight() - 70) // 3)
+        window.geometry(f"+{x}+{y}")
+        window.bind("<Escape>", lambda event: self.close_quick_launcher())
+        window.bind("<FocusOut>", self.on_quick_focus_out, add="+")
+
+        content = tk.Frame(window, bg=c["panel"])
+        content.pack(fill="both", expand=True, padx=1, pady=1)
+        self.quick_search = tk.Entry(
+            content, bg=c["panel"], fg=c["text"],
+            insertbackground=c["accent"], font=("Segoe UI", 13),
+            relief="flat", borderwidth=0,
+        )
+        self.quick_search.insert(0, "Search...")
+        self.quick_search.config(fg=c["muted"])
+        self.quick_search.bind("<FocusIn>", self.clear_quick_placeholder)
+        self.quick_search.bind("<Return>", self.open_main_from_quick)
+        self.quick_search.pack(
+            side="left", fill="x", expand=True, padx=(16, 10), pady=19
+        )
+        tk.Frame(content, bg=c["border"], width=1).pack(
+            side="left", fill="y", pady=13, padx=(0, 5)
+        )
+
+        self.quick_tab_buttons = {}
+        for mode, icon in (
+            ("apps", "▣"),
+            ("favorites", "★"),
+            ("files", "▤"),
+            ("commands", "⌘"),
+            ("tools", "∑"),
+            ("settings", "⚙"),
+        ):
+            button = tk.Button(
+                content, text=icon, command=lambda selected=mode: self.open_main_from_quick(mode=selected),
+                bg=c["selected"] if mode == self.mode else c["panel"],
+                fg=c["accent"] if mode == self.mode else c["muted"],
+                activebackground=c["selected"], activeforeground=c["accent"],
+                relief="flat", font=("Segoe UI Symbol", 13), width=2,
+                takefocus=True, cursor="hand2", bd=0,
+            )
+            button.pack(side="left", padx=2, pady=10)
+            self.quick_tab_buttons[mode] = button
+
+        window.deiconify()
+        window.lift()
+        window.focus_force()
+        self.quick_search.focus_force()
+
+    def clear_quick_placeholder(self, event=None):
+        if self.quick_search.get() == "Search...":
+            self.quick_search.delete(0, "end")
+            self.quick_search.config(fg=self.palette()["text"])
+
+    def on_quick_focus_out(self, event=None):
+        if self.quick_window and self.quick_window.winfo_exists():
+            self.quick_window.after(180, self.close_quick_launcher_if_unfocused)
+
+    def close_quick_launcher_if_unfocused(self):
+        if not self.quick_window or not self.quick_window.winfo_exists():
+            return
+        try:
+            focused = self.quick_window.focus_get()
+        except tk.TclError:
+            focused = None
+        if focused is None or focused.winfo_toplevel() != self.quick_window:
+            self.close_quick_launcher()
+
+    def close_quick_launcher(self):
+        if self.quick_window and self.quick_window.winfo_exists():
+            self.quick_window.destroy()
+        self.quick_window = None
+
+    def open_main_from_quick(self, event=None, mode=None):
+        if not self.quick_window or not self.quick_window.winfo_exists():
+            return "break"
+        query = self.quick_search.get().strip()
+        if query == "Search...":
+            query = ""
+        selected_mode = mode or self.mode
+        self.close_quick_launcher()
+        if selected_mode != self.mode:
+            self.change_mode(selected_mode)
+        self.root.deiconify()
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        if query and selected_mode != "settings":
+            self.search.delete(0, "end")
+            self.search.insert(0, query)
+            self.on_search()
+        self.root.after(120, self.focus_main_search)
+        self.root.after(700, lambda: self.root.attributes("-topmost", False))
+        return "break"
+
+    def focus_main_search(self):
         if not self.closing:
             self.root.lift()
-            self.root.focus_force()
-            self.search.focus_force()
-            self.search.icursor("end")
+            if self.mode != "settings":
+                self.search.focus_force()
+                self.search.icursor("end")
 
     def scan_apps(self):
         found = {}
@@ -1649,6 +1747,7 @@ class CMDPal:
 
     def close(self):
         self.closing = True
+        self.close_quick_launcher()
         if self.hotkey_thread_id and os.name == "nt":
             try:
                 ctypes.windll.user32.PostThreadMessageW(self.hotkey_thread_id, 0x0012, 0, 0)
