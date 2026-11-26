@@ -33,7 +33,7 @@ SELECTED = "#234b3b"
 HIBERNATE_COMMAND = "__CMD_HIBERNATE__"
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_REGISTRY_NAME = "CMDPal"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 LATEST_RELEASE_API = "https://api.github.com/repos/marlohowe/cmd-pal/releases/latest"
 MAX_UPDATE_BYTES = 150 * 1024 * 1024
 ACCENT_PRESETS = {
@@ -1118,16 +1118,18 @@ class CMDPal:
         window.overrideredirect(True)
         window.attributes("-topmost", True)
         window.configure(bg=c["border"])
-        window.geometry("620x70")
+        window.geometry("620x240")
         window.update_idletasks()
         x = (window.winfo_screenwidth() - 620) // 2
-        y = max(24, (window.winfo_screenheight() - 70) // 3)
+        y = max(24, (window.winfo_screenheight() - 240) // 3)
         window.geometry(f"+{x}+{y}")
         window.bind("<Escape>", lambda event: self.close_quick_launcher())
         window.bind("<FocusOut>", self.on_quick_focus_out, add="+")
 
         content = tk.Frame(window, bg=c["panel"])
-        content.pack(fill="both", expand=True, padx=1, pady=1)
+        content.pack(fill="x", padx=1, pady=(1, 0))
+        content.pack_propagate(False)
+        content.configure(height=70)
         self.quick_search = tk.Entry(
             content, bg=c["panel"], fg=c["text"],
             insertbackground=c["accent"], font=("Segoe UI", 13),
@@ -1136,7 +1138,10 @@ class CMDPal:
         self.quick_search.insert(0, "Search...")
         self.quick_search.config(fg=c["muted"])
         self.quick_search.bind("<FocusIn>", self.clear_quick_placeholder)
-        self.quick_search.bind("<Return>", self.open_main_from_quick)
+        self.quick_search.bind("<KeyRelease>", self.on_quick_search)
+        self.quick_search.bind("<Up>", lambda event: self.move_quick_selection(-1))
+        self.quick_search.bind("<Down>", lambda event: self.move_quick_selection(1))
+        self.quick_search.bind("<Return>", self.open_quick_selected)
         self.quick_search.pack(
             side="left", fill="x", expand=True, padx=(16, 10), pady=19
         )
@@ -1164,15 +1169,78 @@ class CMDPal:
             button.pack(side="left", padx=2, pady=10)
             self.quick_tab_buttons[mode] = button
 
+        self.quick_results = tk.Listbox(
+            window, height=6, bg=c["panel"], fg=c["text"],
+            selectbackground=c["selected"], selectforeground=c["accent"],
+            activestyle="none", highlightthickness=0, borderwidth=0,
+            relief="flat", font=("Segoe UI", 10), exportselection=False,
+        )
+        self.quick_results.pack(fill="both", expand=True, padx=1, pady=(0, 1))
+        self.quick_results.bind("<<ListboxSelect>>", self.on_quick_result_select)
+        self.quick_results.bind("<Up>", lambda event: self.move_quick_selection(-1))
+        self.quick_results.bind("<Down>", lambda event: self.move_quick_selection(1))
+        self.quick_results.bind("<Return>", self.open_quick_selected)
+        self.quick_results.bind("<Double-Button-1>", self.open_quick_selected)
+
         window.deiconify()
         window.lift()
         window.focus_force()
         self.quick_search.focus_force()
+        window.after(50, self.on_quick_search)
 
     def clear_quick_placeholder(self, event=None):
         if self.quick_search.get() == "Search...":
             self.quick_search.delete(0, "end")
             self.quick_search.config(fg=self.palette()["text"])
+
+    def on_quick_search(self, event=None):
+        if not self.quick_window or not self.quick_window.winfo_exists():
+            return
+        if event and event.keysym in ("Up", "Down", "Return", "Escape"):
+            return
+        query = self.quick_search.get()
+        if query == "Search..." or self.mode == "settings":
+            return
+        self.search.delete(0, "end")
+        self.search.insert(0, query)
+        self.on_search()
+
+    def render_quick_results(self):
+        if not self.quick_window or not self.quick_window.winfo_exists():
+            return
+        self.quick_results.delete(0, "end")
+        for name, target, kind in self.results:
+            label = self.result_kind_label(name, target, kind)
+            self.quick_results.insert("end", f"{name}    [{label}]")
+        if self.results:
+            self.selected = min(self.selected, len(self.results) - 1)
+            self.quick_results.selection_set(self.selected)
+            self.quick_results.activate(self.selected)
+            self.quick_results.see(self.selected)
+
+    def on_quick_result_select(self, event=None):
+        if self.quick_results.curselection():
+            self.selected = self.quick_results.curselection()[0]
+
+    def move_quick_selection(self, amount):
+        if self.results:
+            self.selected = min(
+                len(self.results) - 1, max(0, self.selected + amount)
+            )
+            self.quick_results.selection_clear(0, "end")
+            self.quick_results.selection_set(self.selected)
+            self.quick_results.activate(self.selected)
+            self.quick_results.see(self.selected)
+        return "break"
+
+    def open_quick_selected(self, event=None):
+        if not self.results:
+            return self.open_main_from_quick()
+        if self.results[self.selected][2] == "result":
+            return self.open_main_from_quick()
+        self.launch_selected()
+        self.close_quick_launcher()
+        return "break"
 
     def on_quick_focus_out(self, event=None):
         if self.quick_window and self.quick_window.winfo_exists():
@@ -1381,6 +1449,7 @@ class CMDPal:
                 item_options["image"] = image
             self.listbox.insert("", "end", **item_options)
         self.highlight_result()
+        self.render_quick_results()
 
     def result_kind_label(self, name, target, kind):
         if kind == "file":

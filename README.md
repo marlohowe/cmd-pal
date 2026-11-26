@@ -20,9 +20,10 @@ pythonw .\CMD_Pal.py
 
 On Windows, the default global launcher shortcut is `Shift+?`; it can be
 changed from **Settings**. It opens a compact launcher with a search field and
-icons for each tab. Choose a tab icon or type a query and press Enter to bring
-the full app forward on that screen. The full workspace remains on its current
-screen when hidden or reopened.
+icons for each tab, with matching results shown underneath. Use the Up/Down
+arrow keys and Enter to open the highlighted result, or choose a tab icon to
+bring the full app forward on that screen. The full workspace remains on its
+current screen when hidden or reopened.
 
 The results view shows compact app/file-type icons and a type label for each
 item. In **Settings → Personalize**, choose dark/light appearance, a preset or
