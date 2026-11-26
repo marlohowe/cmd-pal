@@ -25,8 +25,9 @@ arrow keys and Enter to open the highlighted result, or choose a tab icon to
 bring the full app forward on that screen. The full workspace remains on its
 current screen when hidden or reopened.
 
-The results view shows compact app/file-type icons and a type label for each
-item. In **Settings → Personalize**, choose dark/light appearance, a preset or
+The results view uses Windows' actual app and file-association icons when
+available, with compact type icons as a fallback. In **Settings → Personalize**,
+choose dark/light appearance, a preset or
 custom accent color, comfortable/compact result spacing, and whether icons are
 shown. These preferences are saved locally.
 

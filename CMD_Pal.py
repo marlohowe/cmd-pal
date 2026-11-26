@@ -33,7 +33,7 @@ SELECTED = "#234b3b"
 HIBERNATE_COMMAND = "__CMD_HIBERNATE__"
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_REGISTRY_NAME = "CMDPal"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 LATEST_RELEASE_API = "https://api.github.com/repos/marlohowe/cmd-pal/releases/latest"
 MAX_UPDATE_BYTES = 150 * 1024 * 1024
 ACCENT_PRESETS = {
@@ -90,6 +90,157 @@ def blend_colors(background, foreground, ratio):
         f"{round(bg[index] * (1 - ratio) + fg[index] * ratio):02x}"
         for index in range(3)
     )
+
+
+def windows_shell_icon(master, path, background, size=20):
+    if os.name != "nt" or not path:
+        return None
+
+    # Convert the shell HICON into a Tk-readable PPM without an extra imaging dependency.
+    class SHFILEINFO(ctypes.Structure):
+        _fields_ = [
+            ("hIcon", wintypes.HANDLE),
+            ("iIcon", ctypes.c_int),
+            ("dwAttributes", wintypes.DWORD),
+            ("szDisplayName", wintypes.WCHAR * 260),
+            ("szTypeName", wintypes.WCHAR * 80),
+        ]
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD),
+            ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG),
+            ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    class RGBQUAD(ctypes.Structure):
+        _fields_ = [
+            ("rgbBlue", ctypes.c_ubyte),
+            ("rgbGreen", ctypes.c_ubyte),
+            ("rgbRed", ctypes.c_ubyte),
+            ("rgbReserved", ctypes.c_ubyte),
+        ]
+
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [
+            ("bmiHeader", BITMAPINFOHEADER),
+            ("bmiColors", RGBQUAD * 1),
+        ]
+
+    shell32 = ctypes.windll.shell32
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    shell32.SHGetFileInfoW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(SHFILEINFO),
+        wintypes.UINT, wintypes.UINT,
+    ]
+    shell32.SHGetFileInfoW.restype = ctypes.c_size_t
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.GetDC.restype = wintypes.HDC
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+    user32.DrawIconEx.argtypes = [
+        wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.HANDLE,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT, wintypes.HANDLE, wintypes.UINT,
+    ]
+    user32.DrawIconEx.restype = wintypes.BOOL
+    user32.DestroyIcon.argtypes = [wintypes.HANDLE]
+    user32.DestroyIcon.restype = wintypes.BOOL
+    user32.FillRect.argtypes = [
+        wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.HANDLE
+    ]
+    user32.FillRect.restype = ctypes.c_int
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.CreateDIBSection.argtypes = [
+        wintypes.HDC, ctypes.POINTER(BITMAPINFO), wintypes.UINT,
+        ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, wintypes.DWORD,
+    ]
+    gdi32.CreateDIBSection.restype = wintypes.HANDLE
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HANDLE]
+    gdi32.SelectObject.restype = wintypes.HANDLE
+    gdi32.CreateSolidBrush.argtypes = [wintypes.DWORD]
+    gdi32.CreateSolidBrush.restype = wintypes.HANDLE
+    gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+
+    icon_info = SHFILEINFO()
+    icon = shell32.SHGetFileInfoW(
+        str(path), 0, ctypes.byref(icon_info), ctypes.sizeof(icon_info), 0x100 | 0x1
+    )
+    if not icon or not icon_info.hIcon:
+        return None
+
+    screen_dc = None
+    memory_dc = None
+    bitmap = None
+    old_bitmap = None
+    brush = None
+    try:
+        screen_dc = user32.GetDC(None)
+        if not screen_dc:
+            return None
+        bitmap_info = BITMAPINFO()
+        bitmap_info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bitmap_info.bmiHeader.biWidth = size
+        bitmap_info.bmiHeader.biHeight = -size
+        bitmap_info.bmiHeader.biPlanes = 1
+        bitmap_info.bmiHeader.biBitCount = 32
+        bitmap_info.bmiHeader.biCompression = 0
+        pixels = ctypes.c_void_p()
+        bitmap = gdi32.CreateDIBSection(
+            screen_dc, ctypes.byref(bitmap_info), 0, ctypes.byref(pixels), None, 0
+        )
+        if not bitmap or not pixels.value:
+            return None
+        memory_dc = gdi32.CreateCompatibleDC(screen_dc)
+        if not memory_dc:
+            return None
+        old_bitmap = gdi32.SelectObject(memory_dc, bitmap)
+        if not old_bitmap or old_bitmap == ctypes.c_void_p(-1).value:
+            return None
+        red, green, blue = (
+            int(background[index:index + 2], 16) for index in (1, 3, 5)
+        )
+        brush = gdi32.CreateSolidBrush(red | (green << 8) | (blue << 16))
+        bounds = wintypes.RECT(0, 0, size, size)
+        if not brush or not user32.FillRect(memory_dc, ctypes.byref(bounds), brush):
+            return None
+        if not user32.DrawIconEx(memory_dc, 0, 0, icon_info.hIcon, size, size, 0, None, 0x3):
+            return None
+        raw = ctypes.string_at(pixels.value, size * size * 4)
+        rgb = bytearray(size * size * 3)
+        for source in range(0, len(raw), 4):
+            destination = source // 4 * 3
+            rgb[destination:destination + 3] = bytes(
+                (raw[source + 2], raw[source + 1], raw[source])
+            )
+        ppm = f"P6\n{size} {size}\n255\n".encode("ascii") + rgb
+        return tk.PhotoImage(master=master, data=bytes(ppm), format="PPM")
+    except (AttributeError, OSError, TypeError, ValueError, ctypes.ArgumentError, tk.TclError):
+        return None
+    finally:
+        if brush:
+            gdi32.DeleteObject(brush)
+        if old_bitmap and memory_dc:
+            gdi32.SelectObject(memory_dc, old_bitmap)
+        if bitmap:
+            gdi32.DeleteObject(bitmap)
+        if memory_dc:
+            gdi32.DeleteDC(memory_dc)
+        if screen_dc:
+            user32.ReleaseDC(None, screen_dc)
+        user32.DestroyIcon(icon_info.hIcon)
 
 
 def calculate(expression):
@@ -604,14 +755,14 @@ class CMDPal:
         ).pack(side="left")
         self.show_icons_var = tk.BooleanVar(value=self.settings["show_icons"])
         tk.Checkbutton(
-            customize, text="Show app and file type icons",
+            customize, text="Show app and file icons",
             variable=self.show_icons_var, bg=c["panel"], fg=c["text"],
             selectcolor=c["bg"], activebackground=c["panel"],
             activeforeground=c["text"], font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(7, 0))
         tk.Label(
             customize,
-            text="Choose a color preset or pick your own. Icons identify app and file types.",
+            text="Uses Windows app and file icons, with type icons as a fallback.",
             bg=c["panel"], fg=c["muted"], font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(2, 0))
 
@@ -1169,14 +1320,14 @@ class CMDPal:
             button.pack(side="left", padx=2, pady=10)
             self.quick_tab_buttons[mode] = button
 
-        self.quick_results = tk.Listbox(
-            window, height=6, bg=c["panel"], fg=c["text"],
-            selectbackground=c["selected"], selectforeground=c["accent"],
-            activestyle="none", highlightthickness=0, borderwidth=0,
-            relief="flat", font=("Segoe UI", 10), exportselection=False,
+        self.quick_result_images = []
+        self.quick_results = ttk.Treeview(
+            window, show="tree", height=5, style="CMD.Treeview",
+            selectmode="browse",
         )
+        self.quick_results.column("#0", anchor="w", width=580, minwidth=200, stretch=True)
         self.quick_results.pack(fill="both", expand=True, padx=1, pady=(0, 1))
-        self.quick_results.bind("<<ListboxSelect>>", self.on_quick_result_select)
+        self.quick_results.bind("<<TreeviewSelect>>", self.on_quick_result_select)
         self.quick_results.bind("<Up>", lambda event: self.move_quick_selection(-1))
         self.quick_results.bind("<Down>", lambda event: self.move_quick_selection(1))
         self.quick_results.bind("<Return>", self.open_quick_selected)
@@ -1208,29 +1359,39 @@ class CMDPal:
     def render_quick_results(self):
         if not self.quick_window or not self.quick_window.winfo_exists():
             return
-        self.quick_results.delete(0, "end")
-        for name, target, kind in self.results:
+        children = self.quick_results.get_children()
+        if children:
+            self.quick_results.delete(*children)
+        self.quick_result_images = []
+        for index, (name, target, kind) in enumerate(self.results):
             label = self.result_kind_label(name, target, kind)
-            self.quick_results.insert("end", f"{name}    [{label}]")
+            options = {"iid": str(index), "text": f"{name}    [{label}]"}
+            if self.settings["show_icons"]:
+                image = self.result_icon(name, target, kind)
+                self.quick_result_images.append(image)
+                options["image"] = image
+            self.quick_results.insert("", "end", **options)
         if self.results:
             self.selected = min(self.selected, len(self.results) - 1)
-            self.quick_results.selection_set(self.selected)
-            self.quick_results.activate(self.selected)
-            self.quick_results.see(self.selected)
+            iid = str(self.selected)
+            self.quick_results.selection_set(iid)
+            self.quick_results.focus(iid)
+            self.quick_results.see(iid)
 
     def on_quick_result_select(self, event=None):
-        if self.quick_results.curselection():
-            self.selected = self.quick_results.curselection()[0]
+        selection = self.quick_results.selection()
+        if selection:
+            self.selected = int(selection[0])
 
     def move_quick_selection(self, amount):
         if self.results:
             self.selected = min(
                 len(self.results) - 1, max(0, self.selected + amount)
             )
-            self.quick_results.selection_clear(0, "end")
-            self.quick_results.selection_set(self.selected)
-            self.quick_results.activate(self.selected)
-            self.quick_results.see(self.selected)
+            iid = str(self.selected)
+            self.quick_results.selection_set(iid)
+            self.quick_results.focus(iid)
+            self.quick_results.see(iid)
         return "break"
 
     def open_quick_selected(self, event=None):
@@ -1460,15 +1621,39 @@ class CMDPal:
             "result": "RESULT",
         }.get(kind, kind.upper())
 
+    def result_icon_path(self, target, kind):
+        if kind in ("app", "file"):
+            path = target
+        elif kind == "command":
+            command = next(
+                (item for item in self.settings["custom_commands"]
+                 if self.command_key(item) == target),
+                None,
+            )
+            path = command["target"] if command and command["type"] == "program" else None
+        else:
+            path = None
+        return path if path and Path(path).exists() else None
+
     def result_icon(self, name, target, kind):
+        c = self.palette()
+        icon_path = self.result_icon_path(target, kind)
+        if icon_path:
+            native_key = ("native", os.path.normcase(os.path.abspath(icon_path)), c["panel"])
+            if native_key in self.icon_cache:
+                return self.icon_cache[native_key]
+            image = windows_shell_icon(self.root, icon_path, c["panel"])
+            if image is not None:
+                self.icon_cache[native_key] = image
+                return image
+
         icon_type = result_icon_type(
             name, target, kind, self.settings["custom_commands"]
         )
-        key = (icon_type, self.palette()["panel"], self.palette()["accent"])
+        key = (icon_type, c["panel"], c["accent"])
         if key in self.icon_cache:
             return self.icon_cache[key]
 
-        c = self.palette()
         color = {
             "browser": "#75a7ff", "pdf": "#fb7474", "image": "#78c68b",
             "video": "#f0a75c", "audio": "#c18cff", "archive": "#d2ac70",
