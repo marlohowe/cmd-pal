@@ -6,14 +6,29 @@ and provide a quick calculator and explicit web search.
 
 ## Run
 
-Install Python 3.10 or newer, then run:
+Install Python 3.10 or newer, then run the source version:
 
 ```powershell
 python .\CMD_Pal.py
 ```
 
-No third-party packages are required. On Windows, the default global launcher
-shortcut is `Shift+?`; it can be changed from **Settings**.
+For a source run without a terminal window, use `pythonw`:
+
+```powershell
+pythonw .\CMD_Pal.py
+```
+
+On Windows, the default global launcher shortcut is `Shift+?`; it can be
+changed from **Settings**.
+
+## Windows executable
+
+Run `.\build.ps1` in PowerShell on Windows to build the standalone,
+no-console executable at `dist\CMD-Pal.exe`. The script installs the pinned
+PyInstaller build dependency from `requirements-build.txt`.
+
+The `.py` source remains available as `CMD_Pal.py`. The packaged app and source
+are published together in the repository's GitHub Releases.
 
 ## Features
 
@@ -26,7 +41,8 @@ shortcut is `Shift+?`; it can be changed from **Settings**.
 - **Tools:** calculate basic arithmetic safely or open a Google search when you
   explicitly choose **Search Web**.
 - **Settings:** switch themes, change the hotkey, or launch a selected `.exe`
-  installer.
+  installer. Enable **Start CMD Pal when I sign in** to add it to the current
+  Windows user's startup registry; the startup copy opens minimized.
 
 Settings are stored in `%APPDATA%\CMDPal\settings.json` (or
 `~\CMDPal\settings.json` when `%APPDATA%` is unavailable). Website shortcuts and

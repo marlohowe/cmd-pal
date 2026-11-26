@@ -4,6 +4,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 import threading
 import tkinter as tk
 import webbrowser
@@ -11,6 +12,11 @@ from ctypes import wintypes
 from pathlib import Path
 from tkinter import filedialog, ttk
 from urllib.parse import quote_plus, urlparse
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 
 BG = "#0c0e16"
@@ -20,6 +26,8 @@ TEXT = "#f4f6ff"
 MUTED = "#929db0"
 SELECTED = "#234b3b"
 HIBERNATE_COMMAND = "__CMD_HIBERNATE__"
+STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_REGISTRY_NAME = "CMDPal"
 
 
 def calculate(expression):
@@ -76,6 +84,16 @@ def calculate(expression):
         raise ValueError("That calculation is undefined or too large.") from error
 
 
+def build_startup_command(executable, script_path, frozen, pythonw_path=None):
+    if frozen:
+        return subprocess.list2cmdline([str(executable), "--startup"])
+    if not pythonw_path or not Path(pythonw_path).is_file():
+        raise OSError("pythonw.exe was not found; install the packaged app for quiet startup.")
+    return subprocess.list2cmdline([
+        str(pythonw_path), str(Path(script_path).resolve()), "--startup"
+    ])
+
+
 class CMDPal:
     def __init__(self):
         self.root = tk.Tk()
@@ -99,6 +117,7 @@ class CMDPal:
             "favorites": [],
             "recent": [],
             "custom_commands": [],
+            "run_on_startup": False,
         }
         self.load_settings()
         self.build_ui()
@@ -112,6 +131,8 @@ class CMDPal:
         threading.Thread(target=self.scan_apps, daemon=True).start()
         if os.name == "nt":
             threading.Thread(target=self.global_hotkey, daemon=True).start()
+        if "--startup" in sys.argv[1:]:
+            self.root.after(0, self.root.iconify)
 
     def palette(self):
         if self.settings["theme"] == "light":
@@ -136,14 +157,30 @@ class CMDPal:
         return image
 
     def build_ui(self):
+        self.ttk_style = ttk.Style(self.root)
+        try:
+            self.ttk_style.theme_use("clam")
+        except tk.TclError:
+            pass
         self.gradient_image = self.gradient(820, 90)
         tk.Label(self.root, image=self.gradient_image, borderwidth=0).pack(fill="x")
         heading = tk.Frame(self.root, bg=BG)
         heading.pack(fill="x", padx=25, pady=(8, 2))
-        tk.Label(heading, text="CMD PAL", bg=BG, fg=ACCENT,
+        brand = tk.Frame(heading, bg=BG)
+        brand.pack(side="left")
+        tk.Label(brand, text="CMD PAL", bg=BG, fg=ACCENT,
                  font=("Segoe UI", 22, "bold")).pack(anchor="w")
-        tk.Label(heading, text="Your personal launcher", bg=BG, fg=MUTED,
+        tk.Label(brand, text="Your personal launcher", bg=BG, fg=MUTED,
                  font=("Segoe UI", 9)).pack(anchor="w")
+        shortcut_hint = tk.Frame(heading, bg=PANEL, padx=11, pady=6)
+        shortcut_hint.pack(side="right", anchor="s", pady=2)
+        tk.Label(shortcut_hint, text="GLOBAL SHORTCUT", bg=PANEL, fg=MUTED,
+                 font=("Segoe UI", 7, "bold")).pack(anchor="e")
+        self.header_hotkey_label = tk.Label(
+            shortcut_hint, text=self.settings["hotkey"].upper(),
+            bg=PANEL, fg=ACCENT, font=("Segoe UI", 10, "bold")
+        )
+        self.header_hotkey_label.pack(anchor="e")
 
         tabs = tk.Frame(self.root, bg=BG)
         tabs.pack(fill="x", padx=25, pady=7)
@@ -220,6 +257,7 @@ class CMDPal:
 
         self.settings_frame = tk.Frame(self.root, bg=BG)
         self.build_settings_ui()
+        self.apply_theme()
         self.update_tabs()
         self.update_mode_panels()
 
@@ -256,52 +294,145 @@ class CMDPal:
 
     def build_settings_ui(self):
         c = self.palette()
-        tk.Label(self.settings_frame, text="Settings", font=("Segoe UI", 20, "bold"),
-                 bg=c["bg"], fg=c["accent"]).pack(anchor="w", pady=(5, 10))
-        tk.Label(self.settings_frame, text="Appearance", font=("Segoe UI", 11, "bold"),
-                 bg=c["bg"], fg=c["text"]).pack(anchor="w")
+        self.settings_canvas = tk.Canvas(
+            self.settings_frame, bg=c["bg"], highlightthickness=0, borderwidth=0
+        )
+        scrollbar = ttk.Scrollbar(
+            self.settings_frame, orient="vertical", command=self.settings_canvas.yview
+        )
+        self.settings_canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.settings_canvas.pack(side="left", fill="both", expand=True)
+        self.settings_content = tk.Frame(self.settings_canvas, bg=c["bg"])
+        self.settings_window = self.settings_canvas.create_window(
+            (0, 0), window=self.settings_content, anchor="nw"
+        )
+        self.settings_content.bind(
+            "<Configure>",
+            lambda event: self.settings_canvas.configure(
+                scrollregion=self.settings_canvas.bbox("all")
+            ),
+        )
+        self.settings_canvas.bind(
+            "<Configure>",
+            lambda event: self.settings_canvas.itemconfigure(
+                self.settings_window, width=event.width
+            ),
+        )
+        tk.Label(self.settings_content, text="Settings", font=("Segoe UI", 20, "bold"),
+                 bg=c["bg"], fg=c["accent"]).pack(anchor="w", pady=(4, 2))
+        tk.Label(self.settings_content, text="Make CMD Pal work the way you do.",
+                 bg=c["bg"], fg=c["muted"], font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 8))
+
+        appearance = self.settings_section(self.settings_content, "APPEARANCE")
+        appearance.pack(fill="x", pady=4)
         self.theme_var = tk.StringVar(value=self.settings["theme"].title())
-        theme_row = tk.Frame(self.settings_frame, bg=c["bg"])
-        theme_row.pack(anchor="w", pady=3)
+        theme_row = tk.Frame(appearance, bg=c["panel"])
+        theme_row.pack(anchor="w")
         for label in ("Dark", "Light"):
             tk.Radiobutton(theme_row, text=label, value=label, variable=self.theme_var,
-                           bg=c["bg"], fg=c["text"], selectcolor=c["panel"],
-                           activebackground=c["bg"]).pack(side="left", padx=(0, 10))
+                           bg=c["panel"], fg=c["text"], selectcolor=c["bg"],
+                           activebackground=c["panel"]).pack(side="left", padx=(0, 12))
 
-        tk.Label(self.settings_frame, text="Global launch shortcut",
-                 font=("Segoe UI", 11, "bold"), bg=c["bg"], fg=c["text"]
-                 ).pack(anchor="w", pady=(8, 0))
+        shortcut = self.settings_section(self.settings_content, "LAUNCH SHORTCUT")
+        shortcut.pack(fill="x", pady=4)
+        tk.Label(shortcut, text="Global hotkey", bg=c["panel"], fg=c["text"],
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.hotkey_var = tk.StringVar(value=self.settings["hotkey"])
-        tk.Entry(self.settings_frame, textvariable=self.hotkey_var, width=25,
-                 font=("Segoe UI", 10), bg=c["panel"], fg=c["text"],
-                 insertbackground=c["accent"]).pack(anchor="w", pady=4, ipady=3)
-        tk.Label(self.settings_frame, text="Default: Shift+?   |   Example: Ctrl+Alt+K",
-                 bg=c["bg"], fg=c["muted"], font=("Segoe UI", 8)).pack(anchor="w")
+        tk.Entry(shortcut, textvariable=self.hotkey_var, width=25,
+                 font=("Segoe UI", 10), bg=c["bg"], fg=c["text"],
+                 insertbackground=c["accent"], relief="flat"
+                 ).pack(anchor="w", pady=5, ipady=4)
+        tk.Label(shortcut, text="Default: Shift+?   ·   Example: Ctrl+Alt+K",
+                 bg=c["panel"], fg=c["muted"], font=("Segoe UI", 8)).pack(anchor="w")
 
-        tk.Label(self.settings_frame, text="Run a Windows .exe installer",
-                 font=("Segoe UI", 12, "bold"), bg=c["bg"], fg=c["accent"]
-                 ).pack(anchor="w", pady=(12, 2))
-        row = tk.Frame(self.settings_frame, bg=c["bg"])
-        row.pack(fill="x", pady=4)
+        startup = self.settings_section(self.settings_content, "WINDOWS STARTUP")
+        startup.pack(fill="x", pady=4)
+        self.startup_var = tk.BooleanVar(value=self.is_startup_enabled())
+        startup_check = tk.Checkbutton(
+            startup, text="Start CMD Pal when I sign in",
+            variable=self.startup_var, bg=c["panel"], fg=c["text"],
+            selectcolor=c["bg"], activebackground=c["panel"],
+            activeforeground=c["text"], font=("Segoe UI", 10),
+        )
+        startup_check.pack(anchor="w")
+        if winreg is None:
+            startup_check.configure(state="disabled")
+        tk.Label(
+            startup,
+            text="Applies to your Windows account only. The app starts minimized to the taskbar.",
+            bg=c["panel"], fg=c["muted"], font=("Segoe UI", 8), wraplength=670,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+
+        installer = self.settings_section(self.settings_content, "INSTALLER")
+        installer.pack(fill="x", pady=4)
+        tk.Label(installer, text="Choose a Windows .exe installer already on this PC.",
+                 bg=c["panel"], fg=c["muted"], font=("Segoe UI", 9)).pack(anchor="w")
+        row = tk.Frame(installer, bg=c["panel"])
+        row.pack(fill="x", pady=5)
         self.installer_var = tk.StringVar(value="No installer selected")
         tk.Entry(row, textvariable=self.installer_var, state="readonly",
-                 bg=c["panel"], fg=c["text"], readonlybackground=c["panel"]
+                 bg=c["bg"], fg=c["text"], readonlybackground=c["bg"], relief="flat"
                  ).pack(side="left", fill="x", expand=True, ipady=4)
         tk.Button(row, text="Browse .EXE", command=self.choose_installer,
                   bg=c["panel"], fg=c["accent"], relief="flat", padx=8, pady=5
                   ).pack(side="left", padx=(6, 0))
-        tk.Button(self.settings_frame, text="RUN INSTALLER", command=self.run_installer,
+        tk.Button(installer, text="RUN INSTALLER", command=self.run_installer,
                   bg=c["accent"], fg=c["bg"], relief="flat", padx=12, pady=7
-                  ).pack(anchor="w")
-        self.installer_status = tk.Label(self.settings_frame, text="", bg=c["bg"],
+                  ).pack(anchor="w", pady=3)
+        self.installer_status = tk.Label(installer, text="", bg=c["panel"],
                                          fg=c["muted"], font=("Segoe UI", 8))
         self.installer_status.pack(anchor="w", pady=2)
         self.selected_installer = None
-        self.settings_message = tk.Label(self.settings_frame, text="", bg=c["bg"], fg=c["muted"])
-        self.settings_message.pack(anchor="w", pady=(7, 2))
-        tk.Button(self.settings_frame, text="SAVE SETTINGS", command=self.apply_settings,
+        self.settings_message = tk.Label(self.settings_content, text="", bg=c["bg"], fg=c["muted"])
+        self.settings_message.pack(anchor="w", pady=(6, 2))
+        tk.Button(self.settings_content, text="SAVE SETTINGS", command=self.apply_settings,
                   bg=c["accent"], fg=c["bg"], relief="flat", padx=12, pady=7
-                  ).pack(anchor="w")
+                  ).pack(anchor="w", pady=(0, 10))
+
+    def settings_section(self, parent, title):
+        c = self.palette()
+        return tk.LabelFrame(
+            parent, text=title, bg=c["panel"], fg=c["accent"],
+            font=("Segoe UI", 8, "bold"), padx=10, pady=8,
+            bd=1, relief="solid", labelanchor="nw",
+        )
+
+    def startup_command(self):
+        frozen = getattr(sys, "frozen", False)
+        pythonw = None if frozen else Path(sys.executable).with_name("pythonw.exe")
+        return build_startup_command(sys.executable, __file__, frozen, pythonw)
+
+    def is_startup_enabled(self):
+        if winreg is None:
+            return False
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_QUERY_VALUE
+            ) as key:
+                winreg.QueryValueEx(key, STARTUP_REGISTRY_NAME)
+            return True
+        except OSError:
+            return False
+
+    def set_startup_enabled(self, enabled):
+        if winreg is None:
+            raise OSError("Run on startup is only available on Windows.")
+        if enabled:
+            command = self.startup_command()
+            with winreg.CreateKeyEx(
+                winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.SetValueEx(key, STARTUP_REGISTRY_NAME, 0, winreg.REG_SZ, command)
+            return
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.DeleteValue(key, STARTUP_REGISTRY_NAME)
+        except FileNotFoundError:
+            pass
 
     def load_settings(self):
         try:
@@ -313,6 +444,8 @@ class CMDPal:
                     self.settings["theme"] = data["theme"]
                 if isinstance(data.get("hotkey"), str):
                     self.settings["hotkey"] = data["hotkey"]
+                if isinstance(data.get("run_on_startup"), bool):
+                    self.settings["run_on_startup"] = data["run_on_startup"]
                 for key in ("favorites", "recent"):
                     if isinstance(data.get(key), list):
                         self.settings[key] = [item for item in data[key] if isinstance(item, str)]
@@ -393,18 +526,41 @@ class CMDPal:
         except ValueError as error:
             self.settings_message.config(text=str(error))
             return
+        startup_error = None
+        try:
+            self.set_startup_enabled(self.startup_var.get())
+            self.settings["run_on_startup"] = self.startup_var.get()
+        except OSError as error:
+            self.startup_var.set(self.is_startup_enabled())
+            self.settings["run_on_startup"] = self.startup_var.get()
+            startup_error = error
         self.settings["theme"] = self.theme_var.get().lower()
         self.settings["hotkey"] = shortcut
         saved = self.save_settings()
         self.apply_theme()
         self.hotkey_label.config(text=shortcut.upper())
+        self.header_hotkey_label.config(text=shortcut.upper())
         if os.name == "nt":
             self.restart_hotkey()
-        self.settings_message.config(text="Settings saved." if saved else
-                                     "Settings applied, but could not be saved.")
+        if startup_error:
+            message = f"Startup setting was not changed: {startup_error}"
+        elif not saved:
+            message = "Settings applied, but could not be saved."
+        else:
+            message = "Settings saved."
+        self.settings_message.config(text=message)
 
     def apply_theme(self):
         c = self.palette()
+        self.ttk_style.configure(
+            "TCombobox", fieldbackground=c["panel"], background=c["panel"],
+            foreground=c["text"], arrowcolor=c["accent"],
+        )
+        self.ttk_style.map(
+            "TCombobox", fieldbackground=[("readonly", c["panel"])],
+            selectbackground=[("readonly", c["selected"])],
+            selectforeground=[("readonly", c["text"])],
+        )
         mapping = {BG: c["bg"], PANEL: c["panel"], ACCENT: c["accent"],
                    TEXT: c["text"], MUTED: c["muted"], SELECTED: c["selected"],
                    "#344153": c["panel"]}
@@ -799,7 +955,10 @@ class CMDPal:
                 if os.name != "nt":
                     self.status.config(text="Hibernate is only available on Windows")
                     return "break"
-                subprocess.Popen(["shutdown.exe", "/h"], shell=False)
+                subprocess.Popen(
+                    ["shutdown.exe", "/h"], shell=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
             elif kind == "command":
                 command = next(item for item in self.settings["custom_commands"]
                                if self.command_key(item) == target)
@@ -809,10 +968,8 @@ class CMDPal:
                         raise ValueError("Shortcut URL must use http:// or https://.")
                     if not webbrowser.open(command["target"]):
                         raise OSError("Could not find a browser to open this shortcut.")
-                elif os.name == "nt":
-                    os.startfile(command["target"])
                 else:
-                    subprocess.Popen([command["target"]], shell=False)
+                    self.open_path(command["target"])
                 self.remember_recent(target)
             elif kind == "file":
                 self.open_path(target)
@@ -826,9 +983,15 @@ class CMDPal:
 
     def open_path(self, path):
         if os.name == "nt":
-            os.startfile(path)
+            if Path(path).suffix.lower() == ".exe":
+                subprocess.Popen(
+                    [path], shell=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            else:
+                os.startfile(path)
         else:
-            subprocess.Popen([path], shell=False)
+            subprocess.Popen([path], shell=False, creationflags=0)
 
     def clear(self, event=None):
         self.search.delete(0, "end")
